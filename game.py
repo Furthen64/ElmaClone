@@ -14,6 +14,7 @@ BIKE_RADIUS = 20
 COIN_RADIUS = 12
 CHECKPOINT_RADIUS = 18
 CRASH_RESPAWN_DELAY = 1.0
+MAX_RACE_TIME_SECONDS = 300
 DEFAULT_LEVEL_PATH = Path(__file__).resolve().parent / "levels" / "first_level.json"
 
 
@@ -63,6 +64,14 @@ def terrain_height_at(points: list[tuple[float, float]], x: float) -> float:
             return y1 + (y2 - y1) * t
 
     return points[-1][1]
+
+
+def format_race_time(milliseconds: int) -> str:
+    total_cs = max(0, milliseconds // 10)
+    minutes = total_cs // 6000
+    seconds = (total_cs % 6000) // 100
+    centiseconds = total_cs % 100
+    return f"{minutes:02d}:{seconds:02d}.{centiseconds:02d}"
 
 
 class Bike:
@@ -157,17 +166,91 @@ class Bike:
         pygame.draw.line(screen, (230, 230, 230), rear, front, 3)
 
 
+def draw_sky(screen: pygame.Surface, animation_time: float) -> None:
+    screen.fill((62, 132, 235))
+    pulse = 0.5 + 0.5 * math.sin(animation_time * 0.25)
+    clouds = [
+        (0.08, 0.12, 260, 170),
+        (0.42, 0.30, 300, 190),
+        (0.78, 0.16, 220, 150),
+        (0.22, 0.74, 290, 175),
+        (0.62, 0.66, 250, 165),
+        (0.93, 0.84, 280, 185),
+    ]
+
+    for nx, ny, base_r, drift in clouds:
+        x = int(nx * SCREEN_WIDTH + math.sin(animation_time * 0.08 + nx * 11.0) * drift * 0.1)
+        y = int(ny * SCREEN_HEIGHT + math.cos(animation_time * 0.09 + ny * 8.0) * drift * 0.08)
+        for index, alpha in enumerate((60, 42, 28, 16)):
+            radius = int(base_r * (1.0 - index * 0.18) * (0.9 + pulse * 0.2))
+            glow = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+            pygame.draw.circle(glow, (180, 215, 255, alpha), (radius, radius), radius)
+            screen.blit(glow, (x - radius, y - radius))
+
+
 def draw_terrain(screen: pygame.Surface, terrain: list[tuple[float, float]], camera_x: float) -> None:
-    poly = []
-    for x, y in terrain:
-        sx = int(x - camera_x)
-        if sx < -120 or sx > SCREEN_WIDTH + 120:
+    poly = [(int(x - camera_x), int(y)) for x, y in terrain]
+    if len(poly) < 2:
+        return
+
+    fill = poly + [(poly[-1][0], SCREEN_HEIGHT), (poly[0][0], SCREEN_HEIGHT)]
+    terrain_layer = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+    pygame.draw.polygon(terrain_layer, (171, 45, 26), fill)
+
+    brick_w = 52
+    brick_h = 24
+    mortar = (231, 183, 150, 128)
+    for row_y in range(0, SCREEN_HEIGHT + brick_h, brick_h):
+        pygame.draw.line(terrain_layer, mortar, (0, row_y), (SCREEN_WIDTH, row_y), 2)
+    for row in range(0, SCREEN_HEIGHT // brick_h + 2):
+        row_y = row * brick_h
+        offset = 0 if row % 2 == 0 else brick_w // 2
+        for col_x in range(-brick_w, SCREEN_WIDTH + brick_w, brick_w):
+            x = col_x + offset
+            pygame.draw.line(terrain_layer, mortar, (x, row_y), (x, row_y + brick_h), 2)
+
+    screen.blit(terrain_layer, (0, 0))
+    pygame.draw.lines(screen, (36, 117, 24), False, poly, 14)
+    pygame.draw.lines(screen, (88, 222, 58), False, poly, 8)
+
+
+def draw_trees(screen: pygame.Surface, terrain: list[tuple[float, float]], camera_x: float) -> None:
+    tree_positions = [500.0, 1550.0, 2450.0, 3500.0, 4650.0, 5550.0]
+    for index, tree_x in enumerate(tree_positions):
+        px = int(tree_x - camera_x)
+        if px < -220 or px > SCREEN_WIDTH + 220:
             continue
-        poly.append((sx, int(y)))
-    if len(poly) >= 2:
-        pygame.draw.lines(screen, (83, 54, 36), False, poly, 5)
-        fill = poly + [(poly[-1][0], SCREEN_HEIGHT), (poly[0][0], SCREEN_HEIGHT)]
-        pygame.draw.polygon(screen, (124, 82, 52), fill)
+
+        ground_y = terrain_height_at(terrain, tree_x)
+        scale = 0.82 + (index % 3) * 0.14
+        trunk_w = int(34 * scale)
+        trunk_h = int(104 * scale)
+        trunk_top = int(ground_y - trunk_h)
+        trunk_rect = pygame.Rect(px - trunk_w // 2, trunk_top, trunk_w, trunk_h)
+        pygame.draw.rect(screen, (173, 87, 31), trunk_rect, border_radius=max(8, trunk_w // 3))
+        pygame.draw.rect(screen, (85, 45, 20), trunk_rect, 2, border_radius=max(8, trunk_w // 3))
+
+        canopy_center = (px, trunk_top - int(20 * scale))
+        canopy_radius = int(52 * scale)
+        for dx, dy, radius in (
+            (-40, 8, canopy_radius),
+            (0, -14, canopy_radius + 8),
+            (38, 10, canopy_radius),
+            (0, 22, canopy_radius + 4),
+        ):
+            pygame.draw.circle(
+                screen,
+                (56, 150, 42),
+                (canopy_center[0] + int(dx * scale), canopy_center[1] + int(dy * scale)),
+                max(20, int(radius * scale)),
+            )
+            pygame.draw.circle(
+                screen,
+                (16, 70, 16),
+                (canopy_center[0] + int(dx * scale), canopy_center[1] + int(dy * scale)),
+                max(20, int(radius * scale)),
+                2,
+            )
 
 
 def draw_collectibles(
@@ -183,8 +266,10 @@ def draw_collectibles(
         cx = int(coin["x"] - camera_x)
         cy = int(coin["y"])
         if -40 <= cx <= SCREEN_WIDTH + 40:
-            pygame.draw.circle(screen, (245, 205, 40), (cx, cy), COIN_RADIUS)
-            pygame.draw.circle(screen, (255, 240, 140), (cx, cy), 6)
+            pygame.draw.circle(screen, (204, 30, 26), (cx, cy), COIN_RADIUS)
+            pygame.draw.circle(screen, (244, 95, 86), (cx - 3, cy - 3), 5)
+            pygame.draw.line(screen, (76, 50, 24), (cx, cy - 10), (cx + 1, cy - 15), 2)
+            pygame.draw.ellipse(screen, (74, 165, 54), pygame.Rect(cx + 1, cy - 16, 8, 5))
 
     for checkpoint in checkpoints:
         x = checkpoint["x"]
@@ -214,9 +299,11 @@ def main() -> int:
     bike = Bike(terrain, finish_x, level["start_x"])
     checkpoint_spawn_x = level["start_x"]
     crash_timer = 0.0
+    race_start_ms = pygame.time.get_ticks()
+    finish_elapsed_ms: int | None = None
 
     def reset_level_state() -> None:
-        nonlocal checkpoint_spawn_x, crash_timer
+        nonlocal checkpoint_spawn_x, crash_timer, race_start_ms, finish_elapsed_ms
         checkpoint_spawn_x = level["start_x"]
         for coin in coins:
             coin["collected"] = False
@@ -224,6 +311,8 @@ def main() -> int:
             checkpoint["active"] = False
         bike.reset(level["start_x"])
         crash_timer = 0.0
+        race_start_ms = pygame.time.get_ticks()
+        finish_elapsed_ms = None
 
     running = True
     while running:
@@ -262,22 +351,37 @@ def main() -> int:
         total_coins = len(coins)
 
         if not bike.crashed and bike.x >= finish_x - 30 and collected == total_coins:
+            if not bike.win:
+                finish_elapsed_ms = pygame.time.get_ticks() - race_start_ms
             bike.win = True
 
         camera_x = clamp(bike.x - SCREEN_WIDTH * 0.35, 0.0, max(finish_x - SCREEN_WIDTH, 0.0))
 
-        screen.fill((130, 190, 255))
+        draw_sky(screen, pygame.time.get_ticks() / 1000.0)
         draw_terrain(screen, terrain, camera_x)
+        draw_trees(screen, terrain, camera_x)
         draw_collectibles(screen, coins, checkpoints, terrain, camera_x)
         bike.draw(screen, camera_x)
 
         finish_screen_x = int(finish_x - camera_x)
         pygame.draw.line(screen, (255, 255, 255), (finish_screen_x, 0), (finish_screen_x, SCREEN_HEIGHT), 3)
 
-        speed_text = font.render(f"Speed: {int(bike.vx)}", True, (20, 20, 30))
-        coins_text = font.render(f"Coins: {collected}/{total_coins}", True, (20, 20, 30))
+        speed_text = font.render(f"Speed: {int(bike.vx)}", True, (14, 26, 50))
+        coins_text = font.render(f"Apples: {collected}/{total_coins}", True, (14, 26, 50))
         screen.blit(speed_text, (20, 16))
         screen.blit(coins_text, (20, 48))
+
+        elapsed_ms = finish_elapsed_ms
+        if elapsed_ms is None:
+            elapsed_ms = pygame.time.get_ticks() - race_start_ms
+        elapsed_ms = min(elapsed_ms, MAX_RACE_TIME_SECONDS * 1000)
+        timer_text = font.render(format_race_time(elapsed_ms), True, (20, 45, 90))
+        timer_bg = pygame.Surface((timer_text.get_width() + 22, timer_text.get_height() + 10), pygame.SRCALPHA)
+        timer_bg.fill((225, 238, 255, 120))
+        timer_x = SCREEN_WIDTH - timer_bg.get_width() - 20
+        timer_y = 18
+        screen.blit(timer_bg, (timer_x, timer_y))
+        screen.blit(timer_text, (timer_x + 11, timer_y + 5))
 
         controls = small_font.render(
             "LEFT/RIGHT move  UP/DOWN tilt  SPACE jump  R full restart",
