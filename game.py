@@ -16,6 +16,17 @@ CHECKPOINT_RADIUS = 18
 CRASH_RESPAWN_DELAY = 1.0
 MAX_RACE_TIME_SECONDS = 300
 DEFAULT_LEVEL_PATH = Path(__file__).resolve().parent / "levels" / "first_level.json"
+BIKE_COLOR_OPTIONS = [
+    ("Crimson", (220, 80, 80)),
+    ("Ocean", (55, 155, 245)),
+    ("Leaf", (70, 175, 95)),
+    ("Gold", (225, 185, 70)),
+]
+DAMPENING_OPTIONS = [
+    ("Low", 0.992),
+    ("Medium", 0.985),
+    ("High", 0.978),
+]
 
 
 def clamp(value: float, minimum: float, maximum: float) -> float:
@@ -75,10 +86,19 @@ def format_race_time(milliseconds: int) -> str:
 
 
 class Bike:
-    def __init__(self, terrain: list[tuple[float, float]], level_length: float, start_x: float) -> None:
+    def __init__(
+        self,
+        terrain: list[tuple[float, float]],
+        level_length: float,
+        start_x: float,
+        frame_color: tuple[int, int, int],
+        dampening: float,
+    ) -> None:
         self.terrain = terrain
         self.level_length = level_length
         self.default_start_x = start_x
+        self.frame_color = frame_color
+        self.dampening = dampening
         self.reset(start_x)
 
     def reset(self, spawn_x: float | None = None) -> None:
@@ -93,6 +113,10 @@ class Bike:
         self.crashed = False
         self.win = False
 
+    def apply_setup(self, frame_color: tuple[int, int, int], dampening: float) -> None:
+        self.frame_color = frame_color
+        self.dampening = dampening
+
     def update(self, dt: float, keys: pygame.key.ScancodeWrapper) -> None:
         if self.crashed or self.win:
             return
@@ -104,14 +128,14 @@ class Bike:
             accel -= 950.0
         self.vx += accel * dt
         if self.on_ground:
-            self.vx *= 0.985
+            self.vx *= self.dampening
         self.vx = clamp(self.vx, -450.0, 760.0)
 
         if keys[pygame.K_UP]:
             self.angular_velocity -= 5.5 * dt * 60
         if keys[pygame.K_DOWN]:
             self.angular_velocity += 5.5 * dt * 60
-        self.angular_velocity *= 0.98
+        self.angular_velocity *= clamp(self.dampening - 0.005, 0.96, 0.995)
         self.angle += self.angular_velocity * dt
 
         if keys[pygame.K_SPACE] and self.on_ground:
@@ -131,7 +155,7 @@ class Bike:
             self.y = ground - BIKE_RADIUS
             self.vy = 0.0
             self.on_ground = True
-            self.angular_velocity *= 0.9
+            self.angular_velocity *= clamp(self.dampening - 0.08, 0.82, 0.95)
             if impact_speed > 900.0 or abs(self.angle) > 1.2:
                 self.crashed = True
         else:
@@ -161,8 +185,8 @@ class Bike:
         pygame.draw.circle(screen, (20, 20, 20), front, 14)
         pygame.draw.circle(screen, (170, 170, 170), rear, 8)
         pygame.draw.circle(screen, (170, 170, 170), front, 8)
-        pygame.draw.line(screen, (220, 80, 80), rear, body, 5)
-        pygame.draw.line(screen, (220, 80, 80), body, front, 5)
+        pygame.draw.line(screen, self.frame_color, rear, body, 5)
+        pygame.draw.line(screen, self.frame_color, body, front, 5)
         pygame.draw.line(screen, (230, 230, 230), rear, front, 3)
 
 
@@ -282,11 +306,80 @@ def draw_collectibles(
             pygame.draw.circle(screen, color, (px, py - 60), CHECKPOINT_RADIUS // 2)
 
 
+def draw_menu_screen(screen: pygame.Surface, title_font: pygame.font.Font, body_font: pygame.font.Font) -> None:
+    draw_sky(screen, pygame.time.get_ticks() / 1000.0)
+    title = title_font.render("ElmaClone", True, (255, 255, 255))
+    subtitle = body_font.render("Main Menu", True, (240, 245, 255))
+    options = [
+        "ENTER - Start ride",
+        "D - Design your bike",
+        "ESC - Quit",
+    ]
+    panel = pygame.Surface((520, 290), pygame.SRCALPHA)
+    panel.fill((10, 20, 40, 150))
+    panel_x = SCREEN_WIDTH // 2 - panel.get_width() // 2
+    panel_y = SCREEN_HEIGHT // 2 - panel.get_height() // 2
+    screen.blit(panel, (panel_x, panel_y))
+    screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, panel_y + 35))
+    screen.blit(subtitle, (SCREEN_WIDTH // 2 - subtitle.get_width() // 2, panel_y + 95))
+
+    for index, option in enumerate(options):
+        text = body_font.render(option, True, (230, 235, 250))
+        screen.blit(text, (SCREEN_WIDTH // 2 - text.get_width() // 2, panel_y + 145 + index * 36))
+
+
+def draw_design_screen(
+    screen: pygame.Surface,
+    title_font: pygame.font.Font,
+    body_font: pygame.font.Font,
+    color_name: str,
+    color_value: tuple[int, int, int],
+    dampening_name: str,
+) -> None:
+    draw_sky(screen, pygame.time.get_ticks() / 1000.0)
+    panel = pygame.Surface((700, 380), pygame.SRCALPHA)
+    panel.fill((10, 20, 40, 160))
+    panel_x = SCREEN_WIDTH // 2 - panel.get_width() // 2
+    panel_y = SCREEN_HEIGHT // 2 - panel.get_height() // 2
+    screen.blit(panel, (panel_x, panel_y))
+
+    title = title_font.render("Design your bike", True, (255, 255, 255))
+    screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, panel_y + 28))
+
+    color_text = body_font.render(f"Color: {color_name}", True, (235, 240, 250))
+    damp_text = body_font.render(f"Dampening: {dampening_name}", True, (235, 240, 250))
+    screen.blit(color_text, (panel_x + 50, panel_y + 108))
+    screen.blit(damp_text, (panel_x + 50, panel_y + 150))
+
+    preview_center_x = SCREEN_WIDTH // 2
+    preview_center_y = panel_y + 245
+    rear = (preview_center_x - 90, preview_center_y + 30)
+    front = (preview_center_x + 90, preview_center_y + 30)
+    body = (preview_center_x, preview_center_y - 10)
+    pygame.draw.circle(screen, (20, 20, 20), rear, 24)
+    pygame.draw.circle(screen, (20, 20, 20), front, 24)
+    pygame.draw.circle(screen, (170, 170, 170), rear, 12)
+    pygame.draw.circle(screen, (170, 170, 170), front, 12)
+    pygame.draw.line(screen, color_value, rear, body, 7)
+    pygame.draw.line(screen, color_value, body, front, 7)
+    pygame.draw.line(screen, (230, 230, 230), rear, front, 4)
+
+    controls = [
+        "LEFT/RIGHT - Change color",
+        "UP/DOWN - Change dampening",
+        "ENTER or ESC - Back to menu",
+    ]
+    for index, line in enumerate(controls):
+        text = body_font.render(line, True, (220, 230, 245))
+        screen.blit(text, (panel_x + 50, panel_y + 292 + index * 26))
+
+
 def main() -> int:
     pygame.init()
     pygame.display.set_caption("ElmaClone - v1.1")
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     clock = pygame.time.Clock()
+    title_font = pygame.font.SysFont("consolas", 56, bold=True)
     font = pygame.font.SysFont("consolas", 24)
     small_font = pygame.font.SysFont("consolas", 20)
 
@@ -295,12 +388,27 @@ def main() -> int:
     finish_x = level["finish_x"]
     coins = level["coins"]
     checkpoints = level["checkpoints"]
+    selected_color_index = 0
+    selected_dampening_index = 1
 
-    bike = Bike(terrain, finish_x, level["start_x"])
+    bike = Bike(
+        terrain,
+        finish_x,
+        level["start_x"],
+        BIKE_COLOR_OPTIONS[selected_color_index][1],
+        DAMPENING_OPTIONS[selected_dampening_index][1],
+    )
     checkpoint_spawn_x = level["start_x"]
     crash_timer = 0.0
     race_start_ms = pygame.time.get_ticks()
     finish_elapsed_ms: int | None = None
+    game_state = "menu"
+
+    def apply_selected_setup() -> None:
+        bike.apply_setup(
+            BIKE_COLOR_OPTIONS[selected_color_index][1],
+            DAMPENING_OPTIONS[selected_dampening_index][1],
+        )
 
     def reset_level_state() -> None:
         nonlocal checkpoint_spawn_x, crash_timer, race_start_ms, finish_elapsed_ms
@@ -320,85 +428,133 @@ def main() -> int:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                reset_level_state()
+            elif event.type == pygame.KEYDOWN:
+                if game_state == "menu":
+                    if event.key == pygame.K_RETURN:
+                        apply_selected_setup()
+                        reset_level_state()
+                        game_state = "play"
+                    elif event.key == pygame.K_d:
+                        game_state = "design"
+                    elif event.key == pygame.K_ESCAPE:
+                        running = False
+                elif game_state == "design":
+                    if event.key == pygame.K_LEFT:
+                        selected_color_index = (selected_color_index - 1) % len(BIKE_COLOR_OPTIONS)
+                        apply_selected_setup()
+                    elif event.key == pygame.K_RIGHT:
+                        selected_color_index = (selected_color_index + 1) % len(BIKE_COLOR_OPTIONS)
+                        apply_selected_setup()
+                    elif event.key == pygame.K_UP:
+                        selected_dampening_index = (selected_dampening_index - 1) % len(DAMPENING_OPTIONS)
+                        apply_selected_setup()
+                    elif event.key == pygame.K_DOWN:
+                        selected_dampening_index = (selected_dampening_index + 1) % len(DAMPENING_OPTIONS)
+                        apply_selected_setup()
+                    elif event.key in (pygame.K_RETURN, pygame.K_ESCAPE):
+                        game_state = "menu"
+                elif game_state == "play":
+                    if event.key == pygame.K_r:
+                        reset_level_state()
+                    elif event.key == pygame.K_ESCAPE:
+                        game_state = "menu"
+                        bike.reset(level["start_x"])
+                        crash_timer = 0.0
 
-        keys = pygame.key.get_pressed()
-        bike.update(dt, keys)
+        if game_state == "play":
+            keys = pygame.key.get_pressed()
+            bike.update(dt, keys)
 
-        if bike.crashed:
-            crash_timer += dt
-            if crash_timer >= CRASH_RESPAWN_DELAY:
-                bike.reset(checkpoint_spawn_x)
+            if bike.crashed:
+                crash_timer += dt
+                if crash_timer >= CRASH_RESPAWN_DELAY:
+                    bike.reset(checkpoint_spawn_x)
+                    crash_timer = 0.0
+            else:
                 crash_timer = 0.0
+
+                for checkpoint in checkpoints:
+                    if not checkpoint["active"] and bike.x >= checkpoint["x"]:
+                        checkpoint["active"] = True
+                        checkpoint_spawn_x = checkpoint["x"]
+
+                for coin in coins:
+                    if coin["collected"]:
+                        continue
+                    dx = bike.x - coin["x"]
+                    dy = bike.y - coin["y"]
+                    if dx * dx + dy * dy <= (BIKE_RADIUS + COIN_RADIUS) ** 2:
+                        coin["collected"] = True
+
+            collected = sum(1 for coin in coins if coin["collected"])
+            total_coins = len(coins)
+
+            if not bike.crashed and bike.x >= finish_x - 30 and collected == total_coins:
+                if not bike.win:
+                    finish_elapsed_ms = pygame.time.get_ticks() - race_start_ms
+                bike.win = True
+
+            camera_x = clamp(bike.x - SCREEN_WIDTH * 0.35, 0.0, max(finish_x - SCREEN_WIDTH, 0.0))
+
+            draw_sky(screen, pygame.time.get_ticks() / 1000.0)
+            draw_terrain(screen, terrain, camera_x)
+            draw_trees(screen, terrain, camera_x)
+            draw_collectibles(screen, coins, checkpoints, terrain, camera_x)
+            bike.draw(screen, camera_x)
+
+            finish_screen_x = int(finish_x - camera_x)
+            pygame.draw.line(screen, (255, 255, 255), (finish_screen_x, 0), (finish_screen_x, SCREEN_HEIGHT), 3)
+
+            speed_text = font.render(f"Speed: {int(bike.vx)}", True, (14, 26, 50))
+            coins_text = font.render(f"Apples: {collected}/{total_coins}", True, (14, 26, 50))
+            setup_text = small_font.render(
+                f"Bike: {BIKE_COLOR_OPTIONS[selected_color_index][0]} | Dampening: {DAMPENING_OPTIONS[selected_dampening_index][0]}",
+                True,
+                (20, 20, 30),
+            )
+            screen.blit(speed_text, (20, 16))
+            screen.blit(coins_text, (20, 48))
+            screen.blit(setup_text, (20, 80))
+
+            elapsed_ms = finish_elapsed_ms
+            if elapsed_ms is None:
+                elapsed_ms = pygame.time.get_ticks() - race_start_ms
+            elapsed_ms = min(elapsed_ms, MAX_RACE_TIME_SECONDS * 1000)
+            timer_text = font.render(format_race_time(elapsed_ms), True, (20, 45, 90))
+            timer_bg = pygame.Surface((timer_text.get_width() + 22, timer_text.get_height() + 10), pygame.SRCALPHA)
+            timer_bg.fill((225, 238, 255, 120))
+            timer_x = SCREEN_WIDTH - timer_bg.get_width() - 20
+            timer_y = 18
+            screen.blit(timer_bg, (timer_x, timer_y))
+            screen.blit(timer_text, (timer_x + 11, timer_y + 5))
+
+            controls = small_font.render(
+                "LEFT/RIGHT move  UP/DOWN tilt  SPACE jump  R restart  ESC menu",
+                True,
+                (20, 20, 30),
+            )
+            screen.blit(controls, (20, 108))
+
+            if bike.crashed:
+                crash = font.render("CRASHED - Respawning from checkpoint...", True, (200, 20, 20))
+                screen.blit(crash, (SCREEN_WIDTH // 2 - crash.get_width() // 2, 140))
+            elif bike.win:
+                win = font.render("FINISH! All coins collected - Press R to replay", True, (10, 120, 10))
+                screen.blit(win, (SCREEN_WIDTH // 2 - win.get_width() // 2, 140))
+            elif bike.x >= finish_x - 30 and collected < total_coins:
+                need = font.render("Collect all coins before finishing", True, (120, 70, 0))
+                screen.blit(need, (SCREEN_WIDTH // 2 - need.get_width() // 2, 140))
+        elif game_state == "design":
+            draw_design_screen(
+                screen,
+                title_font,
+                small_font,
+                BIKE_COLOR_OPTIONS[selected_color_index][0],
+                BIKE_COLOR_OPTIONS[selected_color_index][1],
+                DAMPENING_OPTIONS[selected_dampening_index][0],
+            )
         else:
-            crash_timer = 0.0
-
-            for checkpoint in checkpoints:
-                if not checkpoint["active"] and bike.x >= checkpoint["x"]:
-                    checkpoint["active"] = True
-                    checkpoint_spawn_x = checkpoint["x"]
-
-            for coin in coins:
-                if coin["collected"]:
-                    continue
-                dx = bike.x - coin["x"]
-                dy = bike.y - coin["y"]
-                if dx * dx + dy * dy <= (BIKE_RADIUS + COIN_RADIUS) ** 2:
-                    coin["collected"] = True
-
-        collected = sum(1 for coin in coins if coin["collected"])
-        total_coins = len(coins)
-
-        if not bike.crashed and bike.x >= finish_x - 30 and collected == total_coins:
-            if not bike.win:
-                finish_elapsed_ms = pygame.time.get_ticks() - race_start_ms
-            bike.win = True
-
-        camera_x = clamp(bike.x - SCREEN_WIDTH * 0.35, 0.0, max(finish_x - SCREEN_WIDTH, 0.0))
-
-        draw_sky(screen, pygame.time.get_ticks() / 1000.0)
-        draw_terrain(screen, terrain, camera_x)
-        draw_trees(screen, terrain, camera_x)
-        draw_collectibles(screen, coins, checkpoints, terrain, camera_x)
-        bike.draw(screen, camera_x)
-
-        finish_screen_x = int(finish_x - camera_x)
-        pygame.draw.line(screen, (255, 255, 255), (finish_screen_x, 0), (finish_screen_x, SCREEN_HEIGHT), 3)
-
-        speed_text = font.render(f"Speed: {int(bike.vx)}", True, (14, 26, 50))
-        coins_text = font.render(f"Apples: {collected}/{total_coins}", True, (14, 26, 50))
-        screen.blit(speed_text, (20, 16))
-        screen.blit(coins_text, (20, 48))
-
-        elapsed_ms = finish_elapsed_ms
-        if elapsed_ms is None:
-            elapsed_ms = pygame.time.get_ticks() - race_start_ms
-        elapsed_ms = min(elapsed_ms, MAX_RACE_TIME_SECONDS * 1000)
-        timer_text = font.render(format_race_time(elapsed_ms), True, (20, 45, 90))
-        timer_bg = pygame.Surface((timer_text.get_width() + 22, timer_text.get_height() + 10), pygame.SRCALPHA)
-        timer_bg.fill((225, 238, 255, 120))
-        timer_x = SCREEN_WIDTH - timer_bg.get_width() - 20
-        timer_y = 18
-        screen.blit(timer_bg, (timer_x, timer_y))
-        screen.blit(timer_text, (timer_x + 11, timer_y + 5))
-
-        controls = small_font.render(
-            "LEFT/RIGHT move  UP/DOWN tilt  SPACE jump  R full restart",
-            True,
-            (20, 20, 30),
-        )
-        screen.blit(controls, (20, 80))
-
-        if bike.crashed:
-            crash = font.render("CRASHED - Respawning from checkpoint...", True, (200, 20, 20))
-            screen.blit(crash, (SCREEN_WIDTH // 2 - crash.get_width() // 2, 110))
-        elif bike.win:
-            win = font.render("FINISH! All coins collected - Press R to replay", True, (10, 120, 10))
-            screen.blit(win, (SCREEN_WIDTH // 2 - win.get_width() // 2, 110))
-        elif bike.x >= finish_x - 30 and collected < total_coins:
-            need = font.render("Collect all coins before finishing", True, (120, 70, 0))
-            screen.blit(need, (SCREEN_WIDTH // 2 - need.get_width() // 2, 110))
+            draw_menu_screen(screen, title_font, small_font)
 
         pygame.display.flip()
 
