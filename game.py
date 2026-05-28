@@ -120,6 +120,9 @@ class Bike:
         self.rear_compression = 0.0
         self.crashed = False
         self.win = False
+        self.drive_direction = 1
+        self.flip_target = 1.0
+        self.flip_visual = 1.0
 
     def apply_setup(self, frame_color: tuple[int, int, int], dampening: float) -> None:
         self.frame_color = frame_color
@@ -132,13 +135,17 @@ class Bike:
         ry = off_x * sin_a + off_y * cos_a
         return self.x + rx, self.y + ry
 
+    def toggle_direction(self) -> None:
+        self.drive_direction *= -1
+        self.flip_target = float(self.drive_direction)
+
     def update(self, dt: float, keys: pygame.key.ScancodeWrapper) -> None:
         if self.crashed or self.win:
             return
 
         # Up accelerates forward only when on ground (traction)
         if keys[pygame.K_UP] and self.on_ground:
-            self.vx += 1100.0 * dt
+            self.vx += 1100.0 * dt * self.drive_direction
 
         # Left/Right rotate the rider; the body jerk transfers into horizontal movement
         if keys[pygame.K_LEFT]:
@@ -156,10 +163,6 @@ class Bike:
 
         self.angular_velocity *= clamp(self.dampening - 0.005, 0.96, 0.995)
         self.angle += self.angular_velocity * dt
-
-        if keys[pygame.K_SPACE] and self.on_ground:
-            self.vy = -650.0
-            self.on_ground = False
 
         if not self.on_ground:
             self.vy += GRAVITY * dt
@@ -212,7 +215,10 @@ class Bike:
                 blend = clamp(dt * 10.0, 0.0, 1.0)
                 self.angle += (target_angle - self.angle) * blend
 
-        head_x, head_y = self._world_from_local(HEAD_OFFSET_X, HEAD_OFFSET_Y)
+        flip_blend = clamp(dt * 9.0, 0.0, 1.0)
+        self.flip_visual += (self.flip_target - self.flip_visual) * flip_blend
+
+        head_x, head_y = self._world_from_local(HEAD_OFFSET_X * self.drive_direction, HEAD_OFFSET_Y)
         head_ground = terrain_height_at(self.terrain, clamp(head_x, 0.0, self.level_length))
         if head_y >= head_ground:
             self.crashed = True
@@ -227,6 +233,7 @@ class Bike:
             front_compression=self.front_compression,
             rear_compression=self.rear_compression,
             scale=1.0,
+            facing=self.flip_visual,
         )
 
 
@@ -238,13 +245,15 @@ def draw_bike_visual(
     front_compression: float = 0.0,
     rear_compression: float = 0.0,
     scale: float = 1.0,
+    facing: float = 1.0,
 ) -> None:
     cos_a = math.cos(angle)
     sin_a = math.sin(angle)
 
     def rot(off_x: float, off_y: float) -> tuple[int, int]:
-        rx = off_x * cos_a - off_y * sin_a
-        ry = off_x * sin_a + off_y * cos_a
+        local_x = off_x * facing
+        rx = local_x * cos_a - off_y * sin_a
+        ry = local_x * sin_a + off_y * cos_a
         return int(center[0] + rx), int(center[1] + ry)
 
     def draw_suspension(top: tuple[int, int], bottom: tuple[int, int], width: int) -> None:
@@ -592,6 +601,8 @@ def main() -> int:
                 elif game_state == "play":
                     if event.key == pygame.K_r:
                         reset_level_state()
+                    elif event.key == pygame.K_SPACE:
+                        bike.toggle_direction()
                     elif event.key == pygame.K_ESCAPE:
                         game_state = "menu"
                         bike.reset(level["start_x"])
@@ -665,7 +676,7 @@ def main() -> int:
             screen.blit(timer_text, (timer_x + 11, timer_y + 5))
 
             controls = small_font.render(
-                "UP accelerate(traction)  LEFT/RIGHT rotate  SPACE jump  R restart  ESC menu",
+                "UP accelerate(traction)  LEFT/RIGHT rotate  SPACE flip bike  R restart  ESC menu",
                 True,
                 (20, 20, 30),
             )
