@@ -166,28 +166,102 @@ class Bike:
 
     def draw(self, screen: pygame.Surface, camera_x: float) -> None:
         center = (int(self.x - camera_x), int(self.y))
-        wheel_offset_x = 28
-        wheel_offset_y = 14
+        draw_bike_visual(screen, center, self.angle, self.frame_color, scale=1.0)
 
-        cos_a = math.cos(self.angle)
-        sin_a = math.sin(self.angle)
 
-        def rot(off_x: float, off_y: float) -> tuple[int, int]:
-            rx = off_x * cos_a - off_y * sin_a
-            ry = off_x * sin_a + off_y * cos_a
-            return int(center[0] + rx), int(center[1] + ry)
+def draw_bike_visual(
+    screen: pygame.Surface,
+    center: tuple[int, int],
+    angle: float,
+    frame_color: tuple[int, int, int],
+    scale: float = 1.0,
+) -> None:
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
 
-        rear = rot(-wheel_offset_x, wheel_offset_y)
-        front = rot(wheel_offset_x, wheel_offset_y)
-        body = rot(0, -8)
+    def rot(off_x: float, off_y: float) -> tuple[int, int]:
+        rx = off_x * cos_a - off_y * sin_a
+        ry = off_x * sin_a + off_y * cos_a
+        return int(center[0] + rx), int(center[1] + ry)
 
-        pygame.draw.circle(screen, (20, 20, 20), rear, 14)
-        pygame.draw.circle(screen, (20, 20, 20), front, 14)
-        pygame.draw.circle(screen, (170, 170, 170), rear, 8)
-        pygame.draw.circle(screen, (170, 170, 170), front, 8)
-        pygame.draw.line(screen, self.frame_color, rear, body, 5)
-        pygame.draw.line(screen, self.frame_color, body, front, 5)
-        pygame.draw.line(screen, (230, 230, 230), rear, front, 3)
+    def draw_suspension(top: tuple[int, int], bottom: tuple[int, int], width: int) -> None:
+        pygame.draw.line(screen, (192, 196, 205), top, bottom, width)
+        dx = bottom[0] - top[0]
+        dy = bottom[1] - top[1]
+        length = math.hypot(dx, dy)
+        if length < 1:
+            return
+        perp_x = -dy / length
+        perp_y = dx / length
+        spring_radius = max(1, int(1.8 * scale))
+        spring_offset = 2.3 * scale
+        for index in range(6):
+            t = (index + 1) / 7
+            base_x = top[0] + dx * t
+            base_y = top[1] + dy * t
+            offset = spring_offset if index % 2 == 0 else -spring_offset
+            spring_pos = (
+                int(base_x + perp_x * offset),
+                int(base_y + perp_y * offset),
+            )
+            pygame.draw.circle(screen, (80, 84, 94), spring_pos, spring_radius)
+
+    wheel_offset_x = 34 * scale
+    wheel_offset_y = 18 * scale
+    wheel_radius = max(10, int(17 * scale))
+    rim_radius = max(5, int(wheel_radius * 0.58))
+    tube_width = max(3, int(5 * scale))
+    bar_width = max(2, int(3 * scale))
+
+    rear = rot(-wheel_offset_x, wheel_offset_y)
+    front = rot(wheel_offset_x, wheel_offset_y)
+    body = rot(0, -14 * scale)
+    seat = rot(-9 * scale, -20 * scale)
+    handle = rot(18 * scale, -24 * scale)
+    front_fork_top = rot(20 * scale, -18 * scale)
+    front_fork_bottom = rot(32 * scale, 8 * scale)
+    rear_shock_top = rot(-13 * scale, -15 * scale)
+    rear_shock_bottom = rot(-24 * scale, 8 * scale)
+
+    pygame.draw.circle(screen, (22, 22, 22), rear, wheel_radius)
+    pygame.draw.circle(screen, (22, 22, 22), front, wheel_radius)
+    pygame.draw.circle(screen, (168, 168, 170), rear, rim_radius)
+    pygame.draw.circle(screen, (168, 168, 170), front, rim_radius)
+    pygame.draw.line(screen, (128, 128, 132), rear, front, bar_width)
+
+    pygame.draw.line(screen, frame_color, rear, body, tube_width)
+    pygame.draw.line(screen, frame_color, body, front_fork_top, tube_width)
+    pygame.draw.line(screen, frame_color, rear, seat, tube_width)
+    pygame.draw.line(screen, frame_color, seat, handle, tube_width)
+
+    draw_suspension(rear_shock_top, rear_shock_bottom, max(2, int(4 * scale)))
+    draw_suspension(front_fork_top, front_fork_bottom, max(2, int(4 * scale)))
+
+    hip = rot(-2 * scale, -28 * scale)
+    shoulder = rot(4 * scale, -44 * scale)
+    head = rot(8 * scale, -56 * scale)
+    rear_foot = rot(-20 * scale, 1 * scale)
+    front_foot = rot(6 * scale, 3 * scale)
+    rear_hand = rot(8 * scale, -32 * scale)
+    front_hand = rot(20 * scale, -25 * scale)
+
+    pygame.draw.line(screen, (25, 25, 30), hip, shoulder, max(4, int(6 * scale)))
+    pygame.draw.line(screen, (35, 35, 42), hip, rear_foot, max(3, int(5 * scale)))
+    pygame.draw.line(screen, (35, 35, 42), hip, front_foot, max(3, int(5 * scale)))
+    pygame.draw.line(screen, (25, 25, 30), shoulder, rear_hand, max(2, int(4 * scale)))
+    pygame.draw.line(screen, (25, 25, 30), shoulder, front_hand, max(2, int(4 * scale)))
+
+    helmet_radius = max(6, int(8 * scale))
+    pygame.draw.circle(screen, (205, 212, 235), head, helmet_radius)
+    pygame.draw.circle(
+        screen,
+        (86, 120, 180),
+        (head[0] + int(helmet_radius * 0.35), head[1] + int(helmet_radius * 0.1)),
+        max(3, int(helmet_radius * 0.45)),
+    )
+    glove_radius = max(2, int(3 * scale))
+    pygame.draw.circle(screen, (240, 70, 70), rear_hand, glove_radius)
+    pygame.draw.circle(screen, (240, 70, 70), front_hand, glove_radius)
 
 
 def draw_sky(screen: pygame.Surface, animation_time: float) -> None:
@@ -353,16 +427,13 @@ def draw_design_screen(
 
     preview_center_x = SCREEN_WIDTH // 2
     preview_center_y = panel_y + 245
-    rear = (preview_center_x - 90, preview_center_y + 30)
-    front = (preview_center_x + 90, preview_center_y + 30)
-    body = (preview_center_x, preview_center_y - 10)
-    pygame.draw.circle(screen, (20, 20, 20), rear, 24)
-    pygame.draw.circle(screen, (20, 20, 20), front, 24)
-    pygame.draw.circle(screen, (170, 170, 170), rear, 12)
-    pygame.draw.circle(screen, (170, 170, 170), front, 12)
-    pygame.draw.line(screen, color_value, rear, body, 7)
-    pygame.draw.line(screen, color_value, body, front, 7)
-    pygame.draw.line(screen, (230, 230, 230), rear, front, 4)
+    draw_bike_visual(
+        screen,
+        (preview_center_x, preview_center_y),
+        -0.08,
+        color_value,
+        scale=1.35,
+    )
 
     controls = [
         "LEFT/RIGHT - Change color",
