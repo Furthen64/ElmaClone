@@ -121,20 +121,24 @@ class Bike:
         if self.crashed or self.win:
             return
 
-        accel = 0.0
-        if keys[pygame.K_RIGHT]:
-            accel += 1100.0
+        # Up accelerates forward only when on ground (traction)
+        if keys[pygame.K_UP] and self.on_ground:
+            self.vx += 1100.0 * dt
+
+        # Left/Right rotate the rider; the body jerk transfers into horizontal movement
         if keys[pygame.K_LEFT]:
-            accel -= 950.0
-        self.vx += accel * dt
+            self.angular_velocity -= 5.5 * dt * 60
+        if keys[pygame.K_RIGHT]:
+            self.angular_velocity += 5.5 * dt * 60
+
+        # Rotational momentum couples into translation (stronger with ground contact)
+        coupling = 100.0 if self.on_ground else 30.0
+        self.vx += self.angular_velocity * coupling * dt
+
         if self.on_ground:
             self.vx *= self.dampening
         self.vx = clamp(self.vx, -450.0, 760.0)
 
-        if keys[pygame.K_UP]:
-            self.angular_velocity -= 5.5 * dt * 60
-        if keys[pygame.K_DOWN]:
-            self.angular_velocity += 5.5 * dt * 60
         self.angular_velocity *= clamp(self.dampening - 0.005, 0.96, 0.995)
         self.angle += self.angular_velocity * dt
 
@@ -529,7 +533,7 @@ def main() -> int:
             screen.blit(timer_text, (timer_x + 11, timer_y + 5))
 
             controls = small_font.render(
-                "LEFT/RIGHT move  UP/DOWN tilt  SPACE jump  R restart  ESC menu",
+                "UP accelerate(traction)  LEFT/RIGHT rotate  SPACE jump  R restart  ESC menu",
                 True,
                 (20, 20, 30),
             )
