@@ -11,6 +11,12 @@ SCREEN_HEIGHT = 720
 FPS = 60
 GRAVITY = 1800.0
 BIKE_RADIUS = 20
+WHEEL_OFFSET_X = 34.0
+WHEEL_OFFSET_Y = 18.0
+HEAD_OFFSET_X = 8.0
+HEAD_OFFSET_Y = -56.0
+SUSPENSION_TRAVEL = 16.0
+SUSPENSION_REBOUND = 90.0
 COIN_RADIUS = 12
 CHECKPOINT_RADIUS = 18
 CRASH_RESPAWN_DELAY = 1.0
@@ -110,12 +116,21 @@ class Bike:
         self.angle = 0.0
         self.angular_velocity = 0.0
         self.on_ground = True
+        self.front_compression = 0.0
+        self.rear_compression = 0.0
         self.crashed = False
         self.win = False
 
     def apply_setup(self, frame_color: tuple[int, int, int], dampening: float) -> None:
         self.frame_color = frame_color
         self.dampening = dampening
+
+    def _world_from_local(self, off_x: float, off_y: float) -> tuple[float, float]:
+        cos_a = math.cos(self.angle)
+        sin_a = math.sin(self.angle)
+        rx = off_x * cos_a - off_y * sin_a
+        ry = off_x * sin_a + off_y * cos_a
+        return self.x + rx, self.y + ry
 
     def update(self, dt: float, keys: pygame.key.ScancodeWrapper) -> None:
         if self.crashed or self.win:
@@ -153,24 +168,66 @@ class Bike:
         self.y += self.vy * dt
         self.x = clamp(self.x, 0.0, self.level_length)
 
-        ground = terrain_height_at(self.terrain, self.x)
-        if self.y + BIKE_RADIUS >= ground:
-            impact_speed = abs(self.vy)
-            self.y = ground - BIKE_RADIUS
-            self.vy = 0.0
-            self.on_ground = True
-            self.angular_velocity *= clamp(self.dampening - 0.08, 0.82, 0.95)
-            if impact_speed > 900.0 or abs(self.angle) > 1.2:
-                self.crashed = True
-        else:
-            self.on_ground = False
+        self.front_compression = max(0.0, self.front_compression - SUSPENSION_REBOUND * dt)
+        self.rear_compression = max(0.0, self.rear_compression - SUSPENSION_REBOUND * dt)
 
-        if self.y > SCREEN_HEIGHT + 250:
+        for _ in range(2):
+            rear_x, rear_y = self._world_from_local(-WHEEL_OFFSET_X, WHEEL_OFFSET_Y - self.rear_compression)
+            front_x, front_y = self._world_from_local(WHEEL_OFFSET_X, WHEEL_OFFSET_Y - self.front_compression)
+            rear_ground = terrain_height_at(self.terrain, clamp(rear_x, 0.0, self.level_length))
+            front_ground = terrain_height_at(self.terrain, clamp(front_x, 0.0, self.level_length))
+            rear_penetration = rear_y + BIKE_RADIUS - rear_ground
+            front_penetration = front_y + BIKE_RADIUS - front_ground
+
+            if rear_penetration > 0.0:
+                rear_absorb = min(rear_penetration, SUSPENSION_TRAVEL - self.rear_compression)
+                self.rear_compression += max(0.0, rear_absorb)
+                rear_penetration -= max(0.0, rear_absorb)
+                if rear_penetration > 0.0:
+                    self.y -= rear_penetration
+                    if self.vy > 0.0:
+                        self.vy = 0.0
+
+            if front_penetration > 0.0:
+                front_absorb = min(front_penetration, SUSPENSION_TRAVEL - self.front_compression)
+                self.front_compression += max(0.0, front_absorb)
+                front_penetration -= max(0.0, front_absorb)
+                if front_penetration > 0.0:
+                    self.y -= front_penetration
+                    if self.vy > 0.0:
+                        self.vy = 0.0
+
+        rear_x, rear_y = self._world_from_local(-WHEEL_OFFSET_X, WHEEL_OFFSET_Y - self.rear_compression)
+        front_x, front_y = self._world_from_local(WHEEL_OFFSET_X, WHEEL_OFFSET_Y - self.front_compression)
+        rear_ground = terrain_height_at(self.terrain, clamp(rear_x, 0.0, self.level_length))
+        front_ground = terrain_height_at(self.terrain, clamp(front_x, 0.0, self.level_length))
+        rear_contact = rear_y + BIKE_RADIUS >= rear_ground - 2.0
+        front_contact = front_y + BIKE_RADIUS >= front_ground - 2.0
+        self.on_ground = rear_contact or front_contact
+
+        if self.on_ground:
+            self.angular_velocity *= clamp(self.dampening - 0.08, 0.82, 0.95)
+            if rear_contact and front_contact:
+                target_angle = math.atan2(front_ground - rear_ground, max(1.0, front_x - rear_x))
+                blend = clamp(dt * 10.0, 0.0, 1.0)
+                self.angle += (target_angle - self.angle) * blend
+
+        head_x, head_y = self._world_from_local(HEAD_OFFSET_X, HEAD_OFFSET_Y)
+        head_ground = terrain_height_at(self.terrain, clamp(head_x, 0.0, self.level_length))
+        if head_y >= head_ground:
             self.crashed = True
 
     def draw(self, screen: pygame.Surface, camera_x: float) -> None:
         center = (int(self.x - camera_x), int(self.y))
-        draw_bike_visual(screen, center, self.angle, self.frame_color, scale=1.0)
+        draw_bike_visual(
+            screen,
+            center,
+            self.angle,
+            self.frame_color,
+            front_compression=self.front_compression,
+            rear_compression=self.rear_compression,
+            scale=1.0,
+        )
 
 
 def draw_bike_visual(
@@ -178,6 +235,8 @@ def draw_bike_visual(
     center: tuple[int, int],
     angle: float,
     frame_color: tuple[int, int, int],
+    front_compression: float = 0.0,
+    rear_compression: float = 0.0,
     scale: float = 1.0,
 ) -> None:
     cos_a = math.cos(angle)
@@ -217,15 +276,17 @@ def draw_bike_visual(
     tube_width = max(3, int(5 * scale))
     bar_width = max(2, int(3 * scale))
 
-    rear = rot(-wheel_offset_x, wheel_offset_y)
-    front = rot(wheel_offset_x, wheel_offset_y)
+    rear_comp = max(0.0, rear_compression) * scale
+    front_comp = max(0.0, front_compression) * scale
+    rear = rot(-wheel_offset_x, wheel_offset_y - rear_comp)
+    front = rot(wheel_offset_x, wheel_offset_y - front_comp)
     body = rot(0, -14 * scale)
     seat = rot(-9 * scale, -20 * scale)
     handle = rot(18 * scale, -24 * scale)
     front_fork_top = rot(20 * scale, -18 * scale)
-    front_fork_bottom = rot(32 * scale, 8 * scale)
+    front_fork_bottom = front
     rear_shock_top = rot(-13 * scale, -15 * scale)
-    rear_shock_bottom = rot(-24 * scale, 8 * scale)
+    rear_shock_bottom = rear
 
     pygame.draw.circle(screen, (22, 22, 22), rear, wheel_radius)
     pygame.draw.circle(screen, (22, 22, 22), front, wheel_radius)
