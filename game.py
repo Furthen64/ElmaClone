@@ -23,6 +23,7 @@ LEFT_RIGHT_ANGULAR_ACCEL = 5.5 * 60 * LEFT_RIGHT_JERK_SCALE
 AUTO_BALANCE_STRENGTH = 12.0
 AUTO_BALANCE_DAMPING = 0.92
 BRAKE_FORCE = 1600.0
+MAX_BIKE_SPEED = 760.0
 GRAVEL_SPAWN_RATE = 120.0
 COIN_RADIUS = 12
 CHECKPOINT_RADIUS = 18
@@ -187,7 +188,7 @@ class Bike:
 
         if self.on_ground:
             self.vx *= self.dampening
-        self.vx = clamp(self.vx, -450.0, 760.0)
+        self.vx = clamp(self.vx, -MAX_BIKE_SPEED, MAX_BIKE_SPEED)
 
         self.angular_velocity *= clamp(self.dampening - 0.005, 0.96, 0.995)
         self.angle += self.angular_velocity * dt
@@ -762,7 +763,7 @@ def main() -> int:
             finish_screen_x = int(finish_x - camera_x)
             pygame.draw.line(screen, (255, 255, 255), (finish_screen_x, 0), (finish_screen_x, SCREEN_HEIGHT), 3)
 
-            speed_text = font.render(f"Speed: {int(bike.vx)}", True, (14, 26, 50))
+            speed_text = font.render(f"Speed: {abs(int(bike.vx))}", True, (14, 26, 50))
             coins_text = font.render(f"Apples: {collected}/{total_coins}", True, (14, 26, 50))
             setup_text = small_font.render(
                 f"Bike: {BIKE_COLOR_OPTIONS[selected_color_index][0]} | Dampening: {DAMPENING_OPTIONS[selected_dampening_index][0]}",
