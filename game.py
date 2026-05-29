@@ -20,6 +20,7 @@ SUSPENSION_TRAVEL = 16.0
 SUSPENSION_REBOUND = 90.0
 LEFT_RIGHT_JERK_SCALE = 0.05
 LEFT_RIGHT_ANGULAR_ACCEL = 5.5 * 60 * LEFT_RIGHT_JERK_SCALE
+AUTOBALANCING = True
 AUTO_BALANCE_STRENGTH = 12.0
 AUTO_BALANCE_DAMPING = 0.92
 BRAKE_FORCE = 200.0
@@ -362,9 +363,10 @@ class Bike:
                 target_angle = math.atan2(y2 - y1, 2.0 * sample)
                 ground_slope = terrain_slope_at(self.terrain, front_x)
 
-            balance_scale = clamp(abs(self.vx) / 280.0, 0.15, 1.0)
-            self.angular_velocity += (target_angle - self.angle) * AUTO_BALANCE_STRENGTH * balance_scale * dt
-            self.angular_velocity *= AUTO_BALANCE_DAMPING
+            if AUTOBALANCING:
+                balance_scale = clamp(abs(self.vx) / 280.0, 0.15, 1.0)
+                self.angular_velocity += (target_angle - self.angle) * AUTO_BALANCE_STRENGTH * balance_scale * dt
+                self.angular_velocity *= AUTO_BALANCE_DAMPING
 
             ramp_lift_vy = clamp(self.vx * ground_slope, -MAX_RAMP_LIFT_VY, MAX_RAMP_LIFT_VY)
             lift_blend = clamp(dt * RAMP_LAUNCH_RESPONSE, 0.0, 1.0)
