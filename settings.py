@@ -46,6 +46,9 @@ MAX_RACE_TIME_SECONDS = 300
 LEVEL_FILES = [
     ("First Level", Path(__file__).resolve().parent / "levels" / "first_level.json"),
     ("Hole Run", Path(__file__).resolve().parent / "levels" / "hole_level.json"),
+    ("Mountain Run", Path(__file__).resolve().parent / "levels" / "mountain_level.json"),
+    ("Roller Coaster", Path(__file__).resolve().parent / "levels" / "roller_level.json"),
+    ("Bump Run", Path(__file__).resolve().parent / "levels" / "bumpy_level.json"),
 ]
 BIKE_COLOR_OPTIONS = [
     ("Crimson", (220, 80, 80)),
