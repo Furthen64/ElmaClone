@@ -1,5 +1,6 @@
 import json
 import math
+import random
 import sys
 from pathlib import Path
 
@@ -19,6 +20,10 @@ SUSPENSION_TRAVEL = 16.0
 SUSPENSION_REBOUND = 90.0
 LEFT_RIGHT_JERK_SCALE = 0.05
 LEFT_RIGHT_ANGULAR_ACCEL = 5.5 * 60 * LEFT_RIGHT_JERK_SCALE
+AUTO_BALANCE_STRENGTH = 12.0
+AUTO_BALANCE_DAMPING = 0.92
+BRAKE_FORCE = 1600.0
+GRAVEL_SPAWN_RATE = 120.0
 COIN_RADIUS = 12
 CHECKPOINT_RADIUS = 18
 CRASH_RESPAWN_DELAY = 1.0
@@ -125,6 +130,9 @@ class Bike:
         self.drive_direction = 1
         self.flip_target = 1.0
         self.flip_visual = 1.0
+        self.rear_contact = True
+        self.front_contact = True
+        self.gravel_particles: list[dict[str, float | tuple[int, int, int]]] = []
 
     def apply_setup(self, frame_color: tuple[int, int, int], dampening: float) -> None:
         self.frame_color = frame_color
@@ -145,9 +153,17 @@ class Bike:
         if self.crashed or self.win:
             return
 
-        # Up accelerates forward only when on ground (traction)
-        if keys[pygame.K_UP] and self.on_ground:
+        # Up accelerates forward only when rear tire has traction.
+        if keys[pygame.K_UP] and self.rear_contact:
             self.vx += 1100.0 * dt * self.drive_direction
+
+        # Braking works whenever either tire is in contact with the ground.
+        if keys[pygame.K_DOWN] and (self.rear_contact or self.front_contact):
+            brake = BRAKE_FORCE * dt
+            if self.vx > 0.0:
+                self.vx = max(0.0, self.vx - brake)
+            elif self.vx < 0.0:
+                self.vx = min(0.0, self.vx + brake)
 
         # Left/Right rotate the rider; the body jerk transfers into horizontal movement
         if keys[pygame.K_LEFT]:
@@ -208,14 +224,60 @@ class Bike:
         front_ground = terrain_height_at(self.terrain, clamp(front_x, 0.0, self.level_length))
         rear_contact = rear_y + BIKE_RADIUS >= rear_ground - 2.0
         front_contact = front_y + BIKE_RADIUS >= front_ground - 2.0
+        self.rear_contact = rear_contact
+        self.front_contact = front_contact
         self.on_ground = rear_contact or front_contact
 
         if self.on_ground:
             self.angular_velocity *= clamp(self.dampening - 0.08, 0.82, 0.95)
             if rear_contact and front_contact:
                 target_angle = math.atan2(front_ground - rear_ground, max(1.0, front_x - rear_x))
-                blend = clamp(dt * 10.0, 0.0, 1.0)
-                self.angle += (target_angle - self.angle) * blend
+            elif rear_contact:
+                sample = 12.0
+                y1 = terrain_height_at(self.terrain, clamp(rear_x - sample, 0.0, self.level_length))
+                y2 = terrain_height_at(self.terrain, clamp(rear_x + sample, 0.0, self.level_length))
+                target_angle = math.atan2(y2 - y1, 2.0 * sample)
+            else:
+                sample = 12.0
+                y1 = terrain_height_at(self.terrain, clamp(front_x - sample, 0.0, self.level_length))
+                y2 = terrain_height_at(self.terrain, clamp(front_x + sample, 0.0, self.level_length))
+                target_angle = math.atan2(y2 - y1, 2.0 * sample)
+
+            self.angular_velocity += (target_angle - self.angle) * AUTO_BALANCE_STRENGTH * dt
+            self.angular_velocity *= AUTO_BALANCE_DAMPING
+
+        if keys[pygame.K_UP] and self.rear_contact:
+            spawn_count = max(1, int(GRAVEL_SPAWN_RATE * dt))
+            for _ in range(spawn_count):
+                self.gravel_particles.append(
+                    {
+                        "x": rear_x - self.drive_direction * random.uniform(6.0, 14.0),
+                        "y": rear_y + BIKE_RADIUS - random.uniform(2.0, 8.0),
+                        "vx": -self.drive_direction * random.uniform(140.0, 260.0) + self.vx * 0.2,
+                        "vy": -random.uniform(120.0, 230.0),
+                        "life": random.uniform(0.22, 0.38),
+                        "size": random.uniform(1.5, 3.0),
+                        "shade": random.choice(((116, 80, 52), (138, 96, 60), (170, 120, 74))),
+                    }
+                )
+
+        next_particles: list[dict[str, float | tuple[int, int, int]]] = []
+        for particle in self.gravel_particles:
+            life = float(particle["life"]) - dt
+            if life <= 0.0:
+                continue
+            particle["life"] = life
+            particle["x"] = float(particle["x"]) + float(particle["vx"]) * dt
+            particle["y"] = float(particle["y"]) + float(particle["vy"]) * dt
+            particle["vy"] = float(particle["vy"]) + GRAVITY * 0.45 * dt
+            particle["vx"] = float(particle["vx"]) * 0.985
+            ground_y = terrain_height_at(self.terrain, clamp(float(particle["x"]), 0.0, self.level_length))
+            if float(particle["y"]) >= ground_y:
+                particle["y"] = ground_y
+                particle["vy"] = float(particle["vy"]) * -0.18
+                particle["vx"] = float(particle["vx"]) * 0.6
+            next_particles.append(particle)
+        self.gravel_particles = next_particles
 
         flip_blend = clamp(dt * 9.0, 0.0, 1.0)
         self.flip_visual += (self.flip_target - self.flip_visual) * flip_blend
@@ -226,6 +288,16 @@ class Bike:
             self.crashed = True
 
     def draw(self, screen: pygame.Surface, camera_x: float) -> None:
+        for particle in self.gravel_particles:
+            px = int(float(particle["x"]) - camera_x)
+            py = int(float(particle["y"]))
+            if -8 <= px <= SCREEN_WIDTH + 8 and -8 <= py <= SCREEN_HEIGHT + 8:
+                pygame.draw.circle(
+                    screen,
+                    particle["shade"],
+                    (px, py),
+                    max(1, int(float(particle["size"]))),
+                )
         center = (int(self.x - camera_x), int(self.y))
         draw_bike_visual(
             screen,
