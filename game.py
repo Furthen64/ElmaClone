@@ -763,7 +763,7 @@ def main() -> int:
             finish_screen_x = int(finish_x - camera_x)
             pygame.draw.line(screen, (255, 255, 255), (finish_screen_x, 0), (finish_screen_x, SCREEN_HEIGHT), 3)
 
-            speed_text = font.render(f"Speed: {int(bike.vx)}", True, (14, 26, 50))
+            speed_text = font.render(f"Speed: {abs(int(bike.vx))}", True, (14, 26, 50))
             coins_text = font.render(f"Apples: {collected}/{total_coins}", True, (14, 26, 50))
             setup_text = small_font.render(
                 f"Bike: {BIKE_COLOR_OPTIONS[selected_color_index][0]} | Dampening: {DAMPENING_OPTIONS[selected_dampening_index][0]}",
