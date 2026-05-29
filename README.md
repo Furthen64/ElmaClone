@@ -23,7 +23,7 @@ python game.py
 
 - Left / Right: move
 - Up / Down: tilt bike
-- Space: jump
+- Space: flip bike direction
 - R: full level restart
 
 ## Level format
