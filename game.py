@@ -26,6 +26,8 @@ BRAKE_FORCE = 1600.0
 MAX_BIKE_SPEED = 760.0
 RAMP_LAUNCH_RESPONSE = 10.0
 MAX_RAMP_LIFT_VY = 420.0
+AIR_IMPACT_TANGENT_LOSS = 0.45
+AIR_IMPACT_SPIN_LOSS = 0.6
 GRAVEL_SPAWN_RATE = 120.0
 COIN_RADIUS = 12
 CHECKPOINT_RADIUS = 18
@@ -180,6 +182,32 @@ class Bike:
         ry = off_x * sin_a + off_y * cos_a
         return self.x + rx, self.y + ry
 
+    def _surface_normal_at(self, x: float) -> tuple[float, float]:
+        slope = terrain_slope_at(self.terrain, clamp(x, 0.0, self.level_length))
+        nx = slope
+        ny = -1.0
+        length = math.hypot(nx, ny)
+        if length <= 1e-6:
+            return 0.0, -1.0
+        return nx / length, ny / length
+
+    def _apply_airborne_impact(self, contact_x: float) -> None:
+        nx, ny = self._surface_normal_at(contact_x)
+        normal_speed = self.vx * nx + self.vy * ny
+        if normal_speed >= 0.0:
+            return
+
+        tangent_x = -ny
+        tangent_y = nx
+        tangential_speed = self.vx * tangent_x + self.vy * tangent_y
+        speed = math.hypot(self.vx, self.vy)
+        impact_ratio = clamp(-normal_speed / max(1.0, speed), 0.0, 1.0)
+        tangential_speed *= max(0.0, 1.0 - AIR_IMPACT_TANGENT_LOSS * impact_ratio)
+
+        self.vx = tangent_x * tangential_speed
+        self.vy = tangent_y * tangential_speed
+        self.angular_velocity *= max(0.35, 1.0 - AIR_IMPACT_SPIN_LOSS * impact_ratio)
+
     def toggle_direction(self) -> None:
         self.drive_direction *= -1
         self.flip_target = float(self.drive_direction)
@@ -187,6 +215,8 @@ class Bike:
     def update(self, dt: float, keys: pygame.key.ScancodeWrapper) -> None:
         if self.crashed or self.win:
             return
+
+        was_on_ground = self.on_ground
 
         drive_contact = self.rear_contact if self.drive_direction > 0 else self.front_contact
 
@@ -238,6 +268,8 @@ class Bike:
             front_penetration = front_y + BIKE_RADIUS - front_ground
 
             if rear_penetration > 0.0:
+                if not was_on_ground:
+                    self._apply_airborne_impact(rear_x)
                 rear_absorb = min(rear_penetration, SUSPENSION_TRAVEL - self.rear_compression)
                 self.rear_compression += max(0.0, rear_absorb)
                 rear_penetration -= max(0.0, rear_absorb)
@@ -247,6 +279,8 @@ class Bike:
                         self.vy = 0.0
 
             if front_penetration > 0.0:
+                if not was_on_ground:
+                    self._apply_airborne_impact(front_x)
                 front_absorb = min(front_penetration, SUSPENSION_TRAVEL - self.front_compression)
                 self.front_compression += max(0.0, front_absorb)
                 front_penetration -= max(0.0, front_absorb)
