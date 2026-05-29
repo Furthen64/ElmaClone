@@ -21,8 +21,9 @@ python game.py
 
 ## Controls
 
-- Left / Right: move
-- Up / Down: tilt bike
+- Left / Right: rotate (jerk) bike
+- Up: accelerate forward (rear-wheel traction only)
+- Down: brake while either wheel touches ground
 - Space: flip bike direction
 - R: full level restart
 
