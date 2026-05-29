@@ -19,6 +19,8 @@ from settings import (
     BIKE_CENTER_OF_MASS_Y,
     BIKE_RADIUS,
     BRAKE_FORCE,
+    BRAKE_PITCH_RESPONSE,
+    BRAKE_SINGLE_WHEEL_PITCH_BONUS,
     GRAVEL_SPAWN_RATE,
     GRAVITY,
     GROUND_GRAVITY_TORQUE_SCALE,
@@ -162,18 +164,24 @@ class Bike:
             self.vx += thrust / t_len
             self.vy += thrust * slope / t_len
 
+        brake_delta = 0.0
         if keys[pygame.K_DOWN] and (self.rear_contact or self.front_contact):
+            prev_vx = self.vx
             brake = BRAKE_FORCE * dt
             if self.vx > 0.0:
                 self.vx = max(0.0, self.vx - brake)
             elif self.vx < 0.0:
                 self.vx = min(0.0, self.vx + brake)
+            brake_delta = prev_vx - self.vx
 
         if self.on_ground:
             if keys[pygame.K_UP] and drive_contact:
                 self.angular_velocity -= WEIGHT_TRANSFER_RATE * dt * self.drive_direction
-            if keys[pygame.K_DOWN] and (self.rear_contact or self.front_contact) and self.vx != 0.0:
-                self.angular_velocity += WEIGHT_TRANSFER_RATE * dt * (1.0 if self.vx > 0.0 else -1.0)
+            if brake_delta != 0.0:
+                brake_pitch = brake_delta * BRAKE_PITCH_RESPONSE
+                if self.rear_contact ^ self.front_contact:
+                    brake_pitch *= BRAKE_SINGLE_WHEEL_PITCH_BONUS
+                self.angular_velocity += brake_pitch
 
         if keys[pygame.K_LEFT]:
             self.angular_velocity -= LEFT_RIGHT_ANGULAR_ACCEL * dt
