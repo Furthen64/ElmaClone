@@ -28,6 +28,12 @@ RAMP_LAUNCH_RESPONSE = 10.0
 MAX_RAMP_LIFT_VY = 420.0
 AIR_IMPACT_TANGENT_LOSS = 0.45
 AIR_IMPACT_SPIN_LOSS = 0.6
+SUSPENSION_SPRING = 380.0
+SUSPENSION_DAMPER = 18.0
+WEIGHT_TRANSFER_RATE = 1.8
+AIR_DRAG_COEFF = 0.0012
+AIR_ANGULAR_DAMPING = 0.9982
+HARD_LANDING_CRASH_VY = 900.0
 GRAVEL_SPAWN_RATE = 120.0
 COIN_RADIUS = 12
 CHECKPOINT_RADIUS = 18
@@ -162,6 +168,8 @@ class Bike:
         self.on_ground = True
         self.front_compression = 0.0
         self.rear_compression = 0.0
+        self.prev_rear_compression = 0.0
+        self.prev_front_compression = 0.0
         self.crashed = False
         self.win = False
         self.drive_direction = 1
@@ -196,6 +204,9 @@ class Bike:
         normal_speed = self.vx * nx + self.vy * ny
         if normal_speed >= 0.0:
             return
+        if normal_speed < -HARD_LANDING_CRASH_VY:
+            self.crashed = True
+            return
 
         tangent_x = -ny
         tangent_y = nx
@@ -220,9 +231,13 @@ class Bike:
 
         drive_contact = self.rear_contact if self.drive_direction > 0 else self.front_contact
 
-        # Up accelerates forward only when the driven tire has traction.
+        # Up accelerates forward along the terrain slope when the driven tire has traction.
         if keys[pygame.K_UP] and drive_contact:
-            self.vx += 1100.0 * dt * self.drive_direction
+            slope = terrain_slope_at(self.terrain, clamp(self.x, 0.0, self.level_length))
+            t_len = math.hypot(1.0, slope)
+            thrust = 1100.0 * dt * self.drive_direction
+            self.vx += thrust / t_len
+            self.vy += thrust * slope / t_len
 
         # Braking works whenever either tire is in contact with the ground.
         if keys[pygame.K_DOWN] and (self.rear_contact or self.front_contact):
@@ -231,6 +246,13 @@ class Bike:
                 self.vx = max(0.0, self.vx - brake)
             elif self.vx < 0.0:
                 self.vx = min(0.0, self.vx + brake)
+
+        # Weight transfer: throttle shifts weight back (nose up); braking shifts weight forward
+        if self.on_ground:
+            if keys[pygame.K_UP] and drive_contact:
+                self.angular_velocity -= WEIGHT_TRANSFER_RATE * dt * self.drive_direction
+            if keys[pygame.K_DOWN] and (self.rear_contact or self.front_contact) and self.vx != 0.0:
+                self.angular_velocity += WEIGHT_TRANSFER_RATE * dt * (1.0 if self.vx > 0.0 else -1.0)
 
         # Left/Right rotate the rider; the body jerk transfers into horizontal movement
         if keys[pygame.K_LEFT]:
@@ -251,11 +273,18 @@ class Bike:
 
         if not self.on_ground:
             self.vy += GRAVITY * dt
+            speed = math.hypot(self.vx, self.vy)
+            drag = AIR_DRAG_COEFF * speed
+            self.vx *= max(0.0, 1.0 - drag)
+            self.vy *= max(0.0, 1.0 - drag)
+            self.angular_velocity *= AIR_ANGULAR_DAMPING
 
         self.x += self.vx * dt
         self.y += self.vy * dt
         self.x = clamp(self.x, 0.0, self.level_length)
 
+        prev_rear_comp = self.rear_compression
+        prev_front_comp = self.front_compression
         self.front_compression = max(0.0, self.front_compression - SUSPENSION_REBOUND * dt)
         self.rear_compression = max(0.0, self.rear_compression - SUSPENSION_REBOUND * dt)
 
@@ -289,6 +318,16 @@ class Bike:
                     if self.vy > 0.0:
                         self.vy = 0.0
 
+        # Spring-damper: push bike upward proportional to compression with damping
+        if dt > 0.0 and (self.rear_compression > 0.0 or self.front_compression > 0.0):
+            avg_comp = (self.rear_compression + self.front_compression) * 0.5
+            comp_delta = ((self.rear_compression - prev_rear_comp) + (self.front_compression - prev_front_comp)) * 0.5
+            comp_vel = clamp(comp_delta / dt, -200.0, 200.0)
+            spring_up = SUSPENSION_SPRING * avg_comp
+            damp = SUSPENSION_DAMPER * comp_vel
+            impulse = clamp((spring_up + damp) * dt, 0.0, 12.0)
+            self.vy -= impulse
+
         rear_x, rear_y = self._world_from_local(-WHEEL_OFFSET_X, WHEEL_OFFSET_Y - self.rear_compression)
         front_x, front_y = self._world_from_local(WHEEL_OFFSET_X, WHEEL_OFFSET_Y - self.front_compression)
         rear_ground = terrain_height_at(self.terrain, clamp(rear_x, 0.0, self.level_length))
@@ -317,7 +356,8 @@ class Bike:
                 target_angle = math.atan2(y2 - y1, 2.0 * sample)
                 ground_slope = terrain_slope_at(self.terrain, front_x)
 
-            self.angular_velocity += (target_angle - self.angle) * AUTO_BALANCE_STRENGTH * dt
+            balance_scale = clamp(abs(self.vx) / 280.0, 0.15, 1.0)
+            self.angular_velocity += (target_angle - self.angle) * AUTO_BALANCE_STRENGTH * balance_scale * dt
             self.angular_velocity *= AUTO_BALANCE_DAMPING
 
             ramp_lift_vy = clamp(self.vx * ground_slope, -MAX_RAMP_LIFT_VY, MAX_RAMP_LIFT_VY)
