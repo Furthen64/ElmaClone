@@ -24,6 +24,8 @@ AUTO_BALANCE_STRENGTH = 12.0
 AUTO_BALANCE_DAMPING = 0.92
 BRAKE_FORCE = 1600.0
 MAX_BIKE_SPEED = 760.0
+RAMP_LAUNCH_RESPONSE = 10.0
+MAX_RAMP_LIFT_VY = 420.0
 GRAVEL_SPAWN_RATE = 120.0
 COIN_RADIUS = 12
 CHECKPOINT_RADIUS = 18
@@ -97,6 +99,30 @@ def terrain_height_at(points: list[tuple[float, float]], x: float) -> float:
             return y1 + (y2 - y1) * t
 
     return points[-1][1]
+
+
+def terrain_slope_at(points: list[tuple[float, float]], x: float) -> float:
+    if len(points) < 2:
+        return 0.0
+    if x <= points[0][0]:
+        x1, y1 = points[0]
+        x2, y2 = points[1]
+    elif x >= points[-1][0]:
+        x1, y1 = points[-2]
+        x2, y2 = points[-1]
+    else:
+        x1 = y1 = x2 = y2 = 0.0
+        for index in range(len(points) - 1):
+            px1, py1 = points[index]
+            px2, py2 = points[index + 1]
+            if px1 <= x <= px2:
+                x1, y1 = px1, py1
+                x2, y2 = px2, py2
+                break
+    span = x2 - x1
+    if abs(span) < 1e-6:
+        return 0.0
+    return (y2 - y1) / span
 
 
 def format_race_time(milliseconds: int) -> str:
@@ -243,19 +269,27 @@ class Bike:
             self.angular_velocity *= clamp(self.dampening - 0.08, 0.82, 0.95)
             if rear_contact and front_contact:
                 target_angle = math.atan2(front_ground - rear_ground, max(1.0, front_x - rear_x))
+                ground_slope = (front_ground - rear_ground) / max(1.0, front_x - rear_x)
             elif rear_contact:
                 sample = 12.0
                 y1 = terrain_height_at(self.terrain, clamp(rear_x - sample, 0.0, self.level_length))
                 y2 = terrain_height_at(self.terrain, clamp(rear_x + sample, 0.0, self.level_length))
                 target_angle = math.atan2(y2 - y1, 2.0 * sample)
+                ground_slope = terrain_slope_at(self.terrain, rear_x)
             else:
                 sample = 12.0
                 y1 = terrain_height_at(self.terrain, clamp(front_x - sample, 0.0, self.level_length))
                 y2 = terrain_height_at(self.terrain, clamp(front_x + sample, 0.0, self.level_length))
                 target_angle = math.atan2(y2 - y1, 2.0 * sample)
+                ground_slope = terrain_slope_at(self.terrain, front_x)
 
             self.angular_velocity += (target_angle - self.angle) * AUTO_BALANCE_STRENGTH * dt
             self.angular_velocity *= AUTO_BALANCE_DAMPING
+
+            ramp_lift_vy = clamp(self.vx * ground_slope, -MAX_RAMP_LIFT_VY, MAX_RAMP_LIFT_VY)
+            if ramp_lift_vy < 0.0:
+                lift_blend = clamp(dt * RAMP_LAUNCH_RESPONSE, 0.0, 1.0)
+                self.vy += (ramp_lift_vy - self.vy) * lift_blend
 
         if keys[pygame.K_UP] and drive_contact:
             drive_x, drive_y = (rear_x, rear_y) if self.drive_direction > 0 else (front_x, front_y)
