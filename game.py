@@ -24,15 +24,15 @@ AUTO_BALANCE_STRENGTH = 12.0
 AUTO_BALANCE_DAMPING = 0.92
 BRAKE_FORCE = 1600.0
 MAX_BIKE_SPEED = 760.0
-RAMP_LAUNCH_RESPONSE = 10.0
-MAX_RAMP_LIFT_VY = 420.0
-AIR_IMPACT_TANGENT_LOSS = 0.45
-AIR_IMPACT_SPIN_LOSS = 0.6
-SUSPENSION_SPRING = 380.0
-SUSPENSION_DAMPER = 18.0
+RAMP_LAUNCH_RESPONSE = 22.0
+MAX_RAMP_LIFT_VY = 700.0
+AIR_IMPACT_TANGENT_LOSS = 0.28
+AIR_IMPACT_SPIN_LOSS = 0.5
+SUSPENSION_SPRING = 400.0
+SUSPENSION_DAMPER = 20.0
 WEIGHT_TRANSFER_RATE = 1.8
-AIR_DRAG_COEFF = 0.0012
-AIR_ANGULAR_DAMPING = 0.9982
+AIR_DRAG_COEFF = 0.00018
+AIR_ANGULAR_DAMPING = 0.9988
 HARD_LANDING_CRASH_VY = 900.0
 MIN_AIRBORNE_FRAMES = 3
 GRAVEL_SPAWN_RATE = 120.0
@@ -276,7 +276,7 @@ class Bike:
         if not self.on_ground:
             self.vy += GRAVITY * dt
             speed = math.hypot(self.vx, self.vy)
-            drag = AIR_DRAG_COEFF * speed
+            drag = AIR_DRAG_COEFF * speed * dt
             self.vx *= max(0.0, 1.0 - drag)
             self.vy *= max(0.0, 1.0 - drag)
             self.angular_velocity *= AIR_ANGULAR_DAMPING
@@ -367,9 +367,8 @@ class Bike:
             self.angular_velocity *= AUTO_BALANCE_DAMPING
 
             ramp_lift_vy = clamp(self.vx * ground_slope, -MAX_RAMP_LIFT_VY, MAX_RAMP_LIFT_VY)
-            if ramp_lift_vy < 0.0:
-                lift_blend = clamp(dt * RAMP_LAUNCH_RESPONSE, 0.0, 1.0)
-                self.vy += (ramp_lift_vy - self.vy) * lift_blend
+            lift_blend = clamp(dt * RAMP_LAUNCH_RESPONSE, 0.0, 1.0)
+            self.vy += (ramp_lift_vy - self.vy) * lift_blend
 
         if keys[pygame.K_UP] and drive_contact:
             drive_x, drive_y = (rear_x, rear_y) if self.drive_direction > 0 else (front_x, front_y)
@@ -776,7 +775,7 @@ def main() -> int:
 
     running = True
     while running:
-        dt = clock.tick(FPS) / 1000.0
+        dt = min(clock.tick(FPS) / 1000.0, 0.05)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
