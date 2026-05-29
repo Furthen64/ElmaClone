@@ -22,14 +22,18 @@ python game.py
 ## Controls
 
 - Left / Right: rotate (jerk) bike
-- Up: accelerate forward (rear-wheel traction only)
+- Up: accelerate forward (driven-wheel traction only; changes after flip)
 - Down: brake while either wheel touches ground
 - Space: flip bike direction
 - R: full level restart
+- Menu: L to switch between levels
 
 ## Level format
 
-Level file path: `levels/first_level.json`
+Level files:
+
+- `levels/first_level.json`
+- `levels/hole_level.json` (contains deep holes you can crash in)
 
 ```json
 {

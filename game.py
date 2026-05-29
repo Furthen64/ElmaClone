@@ -28,7 +28,10 @@ COIN_RADIUS = 12
 CHECKPOINT_RADIUS = 18
 CRASH_RESPAWN_DELAY = 1.0
 MAX_RACE_TIME_SECONDS = 300
-DEFAULT_LEVEL_PATH = Path(__file__).resolve().parent / "levels" / "first_level.json"
+LEVEL_FILES = [
+    ("First Level", Path(__file__).resolve().parent / "levels" / "first_level.json"),
+    ("Hole Run", Path(__file__).resolve().parent / "levels" / "hole_level.json"),
+]
 BIKE_COLOR_OPTIONS = [
     ("Crimson", (220, 80, 80)),
     ("Ocean", (55, 155, 245)),
@@ -72,6 +75,11 @@ def load_level(path: Path) -> dict:
         "coins": coins,
         "checkpoints": checkpoints,
     }
+
+
+def load_level_entry(index: int) -> tuple[str, dict]:
+    level_name, level_path = LEVEL_FILES[index % len(LEVEL_FILES)]
+    return level_name, load_level(level_path)
 
 
 def terrain_height_at(points: list[tuple[float, float]], x: float) -> float:
@@ -153,8 +161,10 @@ class Bike:
         if self.crashed or self.win:
             return
 
-        # Up accelerates forward only when rear tire has traction.
-        if keys[pygame.K_UP] and self.rear_contact:
+        drive_contact = self.rear_contact if self.drive_direction > 0 else self.front_contact
+
+        # Up accelerates forward only when the driven tire has traction.
+        if keys[pygame.K_UP] and drive_contact:
             self.vx += 1100.0 * dt * self.drive_direction
 
         # Braking works whenever either tire is in contact with the ground.
@@ -246,13 +256,14 @@ class Bike:
             self.angular_velocity += (target_angle - self.angle) * AUTO_BALANCE_STRENGTH * dt
             self.angular_velocity *= AUTO_BALANCE_DAMPING
 
-        if keys[pygame.K_UP] and self.rear_contact:
+        if keys[pygame.K_UP] and drive_contact:
+            drive_x, drive_y = (rear_x, rear_y) if self.drive_direction > 0 else (front_x, front_y)
             spawn_count = max(1, int(GRAVEL_SPAWN_RATE * dt))
             for _ in range(spawn_count):
                 self.gravel_particles.append(
                     {
-                        "x": rear_x - self.drive_direction * random.uniform(6.0, 14.0),
-                        "y": rear_y + BIKE_RADIUS - random.uniform(2.0, 8.0),
+                        "x": drive_x - self.drive_direction * random.uniform(6.0, 14.0),
+                        "y": drive_y + BIKE_RADIUS - random.uniform(2.0, 8.0),
                         "vx": -self.drive_direction * random.uniform(140.0, 260.0) + self.vx * 0.2,
                         "vy": -random.uniform(120.0, 230.0),
                         "life": random.uniform(0.22, 0.38),
@@ -528,16 +539,22 @@ def draw_collectibles(
             pygame.draw.circle(screen, color, (px, py - 60), CHECKPOINT_RADIUS // 2)
 
 
-def draw_menu_screen(screen: pygame.Surface, title_font: pygame.font.Font, body_font: pygame.font.Font) -> None:
+def draw_menu_screen(
+    screen: pygame.Surface,
+    title_font: pygame.font.Font,
+    body_font: pygame.font.Font,
+    level_name: str,
+) -> None:
     draw_sky(screen, pygame.time.get_ticks() / 1000.0)
     title = title_font.render("ElmaClone", True, (255, 255, 255))
     subtitle = body_font.render("Main Menu", True, (240, 245, 255))
     options = [
         "ENTER - Start ride",
+        f"L - Change level ({level_name})",
         "D - Design your bike",
         "ESC - Quit",
     ]
-    panel = pygame.Surface((520, 290), pygame.SRCALPHA)
+    panel = pygame.Surface((620, 330), pygame.SRCALPHA)
     panel.fill((10, 20, 40, 150))
     panel_x = SCREEN_WIDTH // 2 - panel.get_width() // 2
     panel_y = SCREEN_HEIGHT // 2 - panel.get_height() // 2
@@ -602,7 +619,8 @@ def main() -> int:
     font = pygame.font.SysFont("consolas", 24)
     small_font = pygame.font.SysFont("consolas", 20)
 
-    level = load_level(DEFAULT_LEVEL_PATH)
+    selected_level_index = 0
+    selected_level_name, level = load_level_entry(selected_level_index)
     terrain = level["terrain"]
     finish_x = level["finish_x"]
     coins = level["coins"]
@@ -653,6 +671,24 @@ def main() -> int:
                         apply_selected_setup()
                         reset_level_state()
                         game_state = "play"
+                    elif event.key == pygame.K_l:
+                        selected_level_index = (selected_level_index + 1) % len(LEVEL_FILES)
+                        selected_level_name, level = load_level_entry(selected_level_index)
+                        terrain = level["terrain"]
+                        finish_x = level["finish_x"]
+                        coins = level["coins"]
+                        checkpoints = level["checkpoints"]
+                        bike = Bike(
+                            terrain,
+                            finish_x,
+                            level["start_x"],
+                            BIKE_COLOR_OPTIONS[selected_color_index][1],
+                            DAMPENING_OPTIONS[selected_dampening_index][1],
+                        )
+                        checkpoint_spawn_x = level["start_x"]
+                        crash_timer = 0.0
+                        race_start_ms = pygame.time.get_ticks()
+                        finish_elapsed_ms = None
                     elif event.key == pygame.K_d:
                         game_state = "design"
                     elif event.key == pygame.K_ESCAPE:
@@ -775,7 +811,7 @@ def main() -> int:
                 DAMPENING_OPTIONS[selected_dampening_index][0],
             )
         else:
-            draw_menu_screen(screen, title_font, small_font)
+            draw_menu_screen(screen, title_font, small_font, selected_level_name)
 
         pygame.display.flip()
 
