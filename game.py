@@ -17,6 +17,8 @@ HEAD_OFFSET_X = 8.0
 HEAD_OFFSET_Y = -56.0
 SUSPENSION_TRAVEL = 16.0
 SUSPENSION_REBOUND = 90.0
+LEFT_RIGHT_JERK_SCALE = 0.05
+LEFT_RIGHT_ANGULAR_ACCEL = 5.5 * 60 * LEFT_RIGHT_JERK_SCALE
 COIN_RADIUS = 12
 CHECKPOINT_RADIUS = 18
 CRASH_RESPAWN_DELAY = 1.0
@@ -149,9 +151,9 @@ class Bike:
 
         # Left/Right rotate the rider; the body jerk transfers into horizontal movement
         if keys[pygame.K_LEFT]:
-            self.angular_velocity -= 5.5 * dt * 60
+            self.angular_velocity -= LEFT_RIGHT_ANGULAR_ACCEL * dt
         if keys[pygame.K_RIGHT]:
-            self.angular_velocity += 5.5 * dt * 60
+            self.angular_velocity += LEFT_RIGHT_ANGULAR_ACCEL * dt
 
         # Rotational momentum couples into translation (stronger with ground contact)
         coupling = 100.0 if self.on_ground else 30.0
