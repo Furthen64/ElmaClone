@@ -34,6 +34,7 @@ WEIGHT_TRANSFER_RATE = 1.8
 AIR_DRAG_COEFF = 0.0012
 AIR_ANGULAR_DAMPING = 0.9982
 HARD_LANDING_CRASH_VY = 900.0
+MIN_AIRBORNE_FRAMES = 3
 GRAVEL_SPAWN_RATE = 120.0
 COIN_RADIUS = 12
 CHECKPOINT_RADIUS = 18
@@ -177,6 +178,7 @@ class Bike:
         self.flip_visual = 1.0
         self.rear_contact = True
         self.front_contact = True
+        self.airborne_frames = 0
         self.gravel_particles: list[dict[str, float | tuple[int, int, int]]] = []
 
     def apply_setup(self, frame_color: tuple[int, int, int], dampening: float) -> None:
@@ -297,7 +299,7 @@ class Bike:
             front_penetration = front_y + BIKE_RADIUS - front_ground
 
             if rear_penetration > 0.0:
-                if not was_on_ground:
+                if self.airborne_frames >= MIN_AIRBORNE_FRAMES:
                     self._apply_airborne_impact(rear_x)
                 rear_absorb = min(rear_penetration, SUSPENSION_TRAVEL - self.rear_compression)
                 self.rear_compression += max(0.0, rear_absorb)
@@ -308,7 +310,7 @@ class Bike:
                         self.vy = 0.0
 
             if front_penetration > 0.0:
-                if not was_on_ground:
+                if self.airborne_frames >= MIN_AIRBORNE_FRAMES:
                     self._apply_airborne_impact(front_x)
                 front_absorb = min(front_penetration, SUSPENSION_TRAVEL - self.front_compression)
                 self.front_compression += max(0.0, front_absorb)
@@ -337,6 +339,10 @@ class Bike:
         self.rear_contact = rear_contact
         self.front_contact = front_contact
         self.on_ground = rear_contact or front_contact
+        if self.on_ground:
+            self.airborne_frames = 0
+        else:
+            self.airborne_frames += 1
 
         if self.on_ground:
             self.angular_velocity *= clamp(self.dampening - 0.08, 0.82, 0.95)
