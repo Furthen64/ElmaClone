@@ -34,6 +34,13 @@ SUSPENSION_DAMPER = 20.0
 WEIGHT_TRANSFER_RATE = 1.8
 AIR_DRAG_COEFF = 0.00018
 AIR_ANGULAR_DAMPING = 0.9988
+BIKE_CENTER_OF_MASS_X = 2.0
+BIKE_CENTER_OF_MASS_Y = -28.0
+BIKE_ANGULAR_INERTIA = 3200.0
+AIR_GRAVITY_TORQUE_SCALE = 0.35
+GROUND_GRAVITY_TORQUE_SCALE = 1.2
+SINGLE_WHEEL_GRAVITY_BONUS = 1.25
+MAX_GRAVITY_ANGULAR_ACCEL = 16.0
 HARD_LANDING_CRASH_VY = 900.0
 MIN_AIRBORNE_FRAMES = 3
 GRAVEL_SPAWN_RATE = 120.0
@@ -193,6 +200,14 @@ class Bike:
         ry = off_x * sin_a + off_y * cos_a
         return self.x + rx, self.y + ry
 
+    def _rotated_offset(self, off_x: float, off_y: float) -> tuple[float, float]:
+        cos_a = math.cos(self.angle)
+        sin_a = math.sin(self.angle)
+        return (
+            off_x * cos_a - off_y * sin_a,
+            off_x * sin_a + off_y * cos_a,
+        )
+
     def _surface_normal_at(self, x: float) -> tuple[float, float]:
         slope = terrain_slope_at(self.terrain, clamp(x, 0.0, self.level_length))
         nx = slope
@@ -221,6 +236,20 @@ class Bike:
         self.vx = tangent_x * tangential_speed
         self.vy = tangent_y * tangential_speed
         self.angular_velocity *= max(0.35, 1.0 - AIR_IMPACT_SPIN_LOSS * impact_ratio)
+
+    def _gravity_angular_accel(
+        self,
+        pivot: tuple[float, float] | None = None,
+        scale: float = 1.0,
+    ) -> float:
+        com_local_x = BIKE_CENTER_OF_MASS_X * self.drive_direction
+        com_x, _ = self._world_from_local(com_local_x, BIKE_CENTER_OF_MASS_Y)
+        if pivot is None:
+            lever_x, _ = self._rotated_offset(com_local_x, BIKE_CENTER_OF_MASS_Y)
+        else:
+            lever_x = com_x - pivot[0]
+        angular_accel = lever_x * GRAVITY * scale / BIKE_ANGULAR_INERTIA
+        return clamp(angular_accel, -MAX_GRAVITY_ANGULAR_ACCEL, MAX_GRAVITY_ANGULAR_ACCEL)
 
     def toggle_direction(self) -> None:
         self.drive_direction *= -1
@@ -276,6 +305,7 @@ class Bike:
 
         if not self.on_ground:
             self.vy += GRAVITY * dt
+            self.angular_velocity += self._gravity_angular_accel(scale=AIR_GRAVITY_TORQUE_SCALE) * dt
             speed = math.hypot(self.vx, self.vy)
             drag = AIR_DRAG_COEFF * speed * dt
             self.vx *= max(0.0, 1.0 - drag)
@@ -350,18 +380,26 @@ class Bike:
             if rear_contact and front_contact:
                 target_angle = math.atan2(front_ground - rear_ground, max(1.0, front_x - rear_x))
                 ground_slope = (front_ground - rear_ground) / max(1.0, front_x - rear_x)
+                support_pivot = ((rear_x + front_x) * 0.5, (rear_ground + front_ground) * 0.5)
             elif rear_contact:
                 sample = 12.0
                 y1 = terrain_height_at(self.terrain, clamp(rear_x - sample, 0.0, self.level_length))
                 y2 = terrain_height_at(self.terrain, clamp(rear_x + sample, 0.0, self.level_length))
                 target_angle = math.atan2(y2 - y1, 2.0 * sample)
                 ground_slope = terrain_slope_at(self.terrain, rear_x)
+                support_pivot = (rear_x, rear_ground)
             else:
                 sample = 12.0
                 y1 = terrain_height_at(self.terrain, clamp(front_x - sample, 0.0, self.level_length))
                 y2 = terrain_height_at(self.terrain, clamp(front_x + sample, 0.0, self.level_length))
                 target_angle = math.atan2(y2 - y1, 2.0 * sample)
                 ground_slope = terrain_slope_at(self.terrain, front_x)
+                support_pivot = (front_x, front_ground)
+
+            gravity_scale = GROUND_GRAVITY_TORQUE_SCALE
+            if rear_contact ^ front_contact:
+                gravity_scale *= SINGLE_WHEEL_GRAVITY_BONUS
+            self.angular_velocity += self._gravity_angular_accel(support_pivot, gravity_scale) * dt
 
             if AUTOBALANCING:
                 balance_scale = clamp(abs(self.vx) / 280.0, 0.15, 1.0)
