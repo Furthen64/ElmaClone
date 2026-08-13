@@ -61,3 +61,41 @@ DAMPENING_OPTIONS = [
     ("Medium", 0.985),
     ("High", 0.978),
 ]
+
+# --- Weather & Day/Night Cycle ---
+WEATHER_ENABLED = True
+DAY_CYCLE_DURATION = 180  # Full day/night cycle in seconds
+WEATHER_CHANGE_INTERVAL = 45  # Seconds between possible weather changes
+
+# Physics modifiers per weather condition
+TRACTION_MODIFIERS: dict[str, float] = {
+    "clear": 1.0,
+    "rain": 0.80,
+    "fog": 1.0,
+    "wind": 1.0,
+    "snow": 0.65,
+}
+
+BRAKING_MODIFIERS: dict[str, float] = {
+    "clear": 1.0,
+    "rain": 0.75,
+    "fog": 1.0,
+    "wind": 1.0,
+    "snow": 0.70,
+}
+
+AIR_CONTROL_MODIFIERS: dict[str, float] = {
+    "clear": 1.0,
+    "rain": 1.0,
+    "fog": 1.0,
+    "wind": 0.60,
+    "snow": 1.0,
+}
+
+WIND_FORCE_STRENGTH = 30.0  # Max lateral wind force px/s^2
+FOG_VISIBILITY_RADIUS = 400  # Clear visibility radius in fog
+HEADLIGHT_RANGE = 350  # Headlight illumination radius at night
+NIGHT_DARKNESS_ALPHA = 180  # Alpha for nighttime overlay (0-255)
+STAR_COUNT = 80  # Stars rendered at night
+RAIN_PARTICLE_COUNT = 120
+SNOW_PARTICLE_COUNT = 80

@@ -1,6 +1,7 @@
 import pygame
 
 from bike import Bike
+from config import load_config, save_config
 from level import clamp, load_level_entry
 from render import (
     draw_collectibles,
@@ -9,6 +10,7 @@ from render import (
     draw_sky,
     draw_terrain,
     draw_trees,
+    draw_weather_overlays,
     format_race_time,
 )
 from settings import (
@@ -22,7 +24,9 @@ from settings import (
     MAX_RACE_TIME_SECONDS,
     SCREEN_HEIGHT,
     SCREEN_WIDTH,
+    WEATHER_ENABLED,
 )
+from weather import WeatherSystem
 
 
 def main() -> int:
@@ -43,18 +47,24 @@ def main() -> int:
     selected_color_index = 0
     selected_dampening_index = 1
 
+    game_config = load_config()
     bike = Bike(
         terrain,
         finish_x,
         level["start_x"],
         BIKE_COLOR_OPTIONS[selected_color_index][1],
         DAMPENING_OPTIONS[selected_dampening_index][1],
+        game_config,
     )
+    bike.acceleration = float(game_config["acceleration"])
+    bike.thrust_mod = float(game_config["thrust_mod"])
     checkpoint_spawn_x = level["start_x"]
     crash_timer = 0.0
+    weather = WeatherSystem() if WEATHER_ENABLED else None
     race_start_ms = pygame.time.get_ticks()
     finish_elapsed_ms: int | None = None
     game_state = "menu"
+    debug_mode = False
 
     def apply_selected_setup() -> None:
         bike.apply_setup(
@@ -63,7 +73,7 @@ def main() -> int:
         )
 
     def reset_level_state() -> None:
-        nonlocal checkpoint_spawn_x, crash_timer, race_start_ms, finish_elapsed_ms
+        nonlocal checkpoint_spawn_x, crash_timer, race_start_ms, finish_elapsed_ms, weather
         checkpoint_spawn_x = level["start_x"]
         for coin in coins:
             coin["collected"] = False
@@ -73,15 +83,22 @@ def main() -> int:
         crash_timer = 0.0
         race_start_ms = pygame.time.get_ticks()
         finish_elapsed_ms = None
+        if WEATHER_ENABLED:
+            weather = WeatherSystem()
 
     running = True
     while running:
         dt = min(clock.tick(FPS) / 1000.0, 0.05)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                game_config["acceleration"] = bike.acceleration
+                game_config["thrust_mod"] = bike.thrust_mod
+                save_config(game_config)
                 running = False
             elif event.type == pygame.KEYDOWN:
-                if game_state == "menu":
+                if pygame.key.get_mods() & (pygame.KMOD_CTRL | pygame.KMOD_SHIFT) and event.key == pygame.K_d:
+                    debug_mode = not debug_mode
+                elif game_state == "menu":
                     if event.key == pygame.K_RETURN:
                         apply_selected_setup()
                         reset_level_state()
@@ -99,14 +116,22 @@ def main() -> int:
                             level["start_x"],
                             BIKE_COLOR_OPTIONS[selected_color_index][1],
                             DAMPENING_OPTIONS[selected_dampening_index][1],
+                            game_config,
                         )
+                        bike.acceleration = float(game_config["acceleration"])
+                        bike.thrust_mod = float(game_config["thrust_mod"])
                         checkpoint_spawn_x = level["start_x"]
                         crash_timer = 0.0
                         race_start_ms = pygame.time.get_ticks()
                         finish_elapsed_ms = None
+                        if WEATHER_ENABLED:
+                            weather = WeatherSystem()
                     elif event.key == pygame.K_d:
                         game_state = "design"
                     elif event.key == pygame.K_ESCAPE:
+                        game_config["acceleration"] = bike.acceleration
+                        game_config["thrust_mod"] = bike.thrust_mod
+                        save_config(game_config)
                         running = False
                 elif game_state == "design":
                     if event.key == pygame.K_LEFT:
@@ -124,7 +149,23 @@ def main() -> int:
                     elif event.key in (pygame.K_RETURN, pygame.K_ESCAPE):
                         game_state = "menu"
                 elif game_state == "play":
-                    if event.key == pygame.K_r:
+                    if debug_mode and event.key == pygame.K_EQUALS:
+                        bike.acceleration += 50.0
+                        game_config["acceleration"] = bike.acceleration
+                        save_config(game_config)
+                    elif debug_mode and event.key == pygame.K_MINUS:
+                        bike.acceleration = max(100.0, bike.acceleration - 50.0)
+                        game_config["acceleration"] = bike.acceleration
+                        save_config(game_config)
+                    elif debug_mode and event.key == pygame.K_j:
+                        bike.thrust_mod += 0.1
+                        game_config["thrust_mod"] = bike.thrust_mod
+                        save_config(game_config)
+                    elif debug_mode and event.key == pygame.K_k:
+                        bike.thrust_mod = max(0.1, bike.thrust_mod - 0.1)
+                        game_config["thrust_mod"] = bike.thrust_mod
+                        save_config(game_config)
+                    elif event.key == pygame.K_r:
                         reset_level_state()
                     elif event.key == pygame.K_SPACE:
                         bike.toggle_direction()
@@ -135,7 +176,15 @@ def main() -> int:
 
         if game_state == "play":
             keys = pygame.key.get_pressed()
-            bike.update(dt, keys)
+
+            traction_mod = weather.get_traction_modifier() if weather else 1.0
+            braking_mod = weather.get_braking_modifier() if weather else 1.0
+            air_control_mod = weather.get_air_control_modifier() if weather else 1.0
+            wind_fx, _ = weather.get_wind_force() if weather else (0.0, 0.0)
+            bike.update(dt, keys, traction_mod, braking_mod, air_control_mod, wind_fx)
+
+            if weather:
+                weather.update(dt)
 
             if bike.crashed:
                 crash_timer += dt
@@ -150,13 +199,17 @@ def main() -> int:
                         checkpoint["active"] = True
                         checkpoint_spawn_x = checkpoint["x"]
 
+                collect_radius_sq = (BIKE_RADIUS + COIN_RADIUS) ** 2
                 for coin in coins:
                     if coin["collected"]:
                         continue
-                    dx = bike.x - coin["x"]
-                    dy = bike.y - coin["y"]
-                    if dx * dx + dy * dy <= (BIKE_RADIUS + COIN_RADIUS) ** 2:
-                        coin["collected"] = True
+                    for wx, wy in ((bike.rear_wheel_x, bike.rear_wheel_y),
+                                   (bike.front_wheel_x, bike.front_wheel_y)):
+                        dx = wx - coin["x"]
+                        dy = wy - coin["y"]
+                        if dx * dx + dy * dy <= collect_radius_sq:
+                            coin["collected"] = True
+                            break
 
             collected = sum(1 for coin in coins if coin["collected"])
             total_coins = len(coins)
@@ -168,11 +221,22 @@ def main() -> int:
 
             camera_x = clamp(bike.x - SCREEN_WIDTH * 0.35, 0.0, max(finish_x - SCREEN_WIDTH, 0.0))
 
-            draw_sky(screen, pygame.time.get_ticks() / 1000.0)
+            if weather:
+                sky_top, sky_bot = weather.get_sky_colors()
+            else:
+                sky_top, sky_bot = None, None
+            draw_sky(screen, pygame.time.get_ticks() / 1000.0, sky_top, sky_bot)
             draw_terrain(screen, terrain, camera_x)
             draw_trees(screen, terrain, camera_x)
             draw_collectibles(screen, coins, checkpoints, terrain, camera_x)
             bike.draw(screen, camera_x)
+
+            if weather:
+                facing_right = bike.drive_direction > 0
+                draw_weather_overlays(
+                    screen, weather, camera_x, 0.0,
+                    bike.x - camera_x, bike.y, facing_right,
+                )
 
             finish_screen_x = int(finish_x - camera_x)
             pygame.draw.line(screen, (255, 255, 255), (finish_screen_x, 0), (finish_screen_x, SCREEN_HEIGHT), 3)
@@ -184,9 +248,12 @@ def main() -> int:
                 True,
                 (20, 20, 30),
             )
+            weather_text = small_font.render(f"Weather: {weather.get_condition_label()}", True, (20, 20, 30)) if weather else None
             screen.blit(speed_text, (20, 16))
             screen.blit(coins_text, (20, 48))
             screen.blit(setup_text, (20, 80))
+            if weather_text:
+                screen.blit(weather_text, (20, 100))
 
             elapsed_ms = finish_elapsed_ms
             if elapsed_ms is None:
@@ -206,6 +273,31 @@ def main() -> int:
                 (20, 20, 30),
             )
             screen.blit(controls, (20, 108))
+
+            if debug_mode:
+                debug_lines = [
+                    f"Accel: {bike.acceleration:.0f}",
+                    f"Thrust mod: {bike.thrust_mod:.1f}",
+                    f"Pos: ({bike.x:.1f}, {bike.y:.1f})",
+                    f"Vel: ({bike.vx:.1f}, {bike.vy:.1f})",
+                    f"Angle: {(bike.angle * 57.2958):.1f}",
+                    f"AngVel: {bike.angular_velocity:.3f}",
+                    f"Rear wheel: ({bike.rear_wheel_x:.1f}, {bike.rear_wheel_y:.1f})",
+                    f"Front wheel: ({bike.front_wheel_x:.1f}, {bike.front_wheel_y:.1f})",
+                    f"Ground: {bike.on_ground} | Rear: {bike.rear_contact} | Front: {bike.front_contact}",
+                    f"Suspension R:{bike.rear_compression:.1f} F:{bike.front_compression:.1f}",
+                ]
+                for i, line in enumerate(debug_lines):
+                    t = small_font.render(line, True, (255, 255, 0))
+                    screen.blit(t, (SCREEN_WIDTH - t.get_width() - 20, SCREEN_HEIGHT - (len(debug_lines) + i) * 22))
+
+                # Draw wheel hitboxes
+                for wx, wy in ((bike.rear_wheel_x, bike.rear_wheel_y),
+                               (bike.front_wheel_x, bike.front_wheel_y)):
+                    sx = int(wx - camera_x)
+                    sy = int(wy)
+                    pygame.draw.circle(screen, (255, 255, 0), (sx, sy), BIKE_RADIUS + COIN_RADIUS, 1)
+                    pygame.draw.circle(screen, (255, 0, 0), (sx, sy), BIKE_RADIUS, 2)
 
             if bike.crashed:
                 crash = font.render("CRASHED - Respawning from checkpoint...", True, (200, 20, 20))

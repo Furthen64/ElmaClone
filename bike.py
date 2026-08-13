@@ -5,45 +5,7 @@ import pygame
 
 from level import clamp, terrain_height_at, terrain_slope_at
 from render import draw_bike_visual
-from settings import (
-    AIR_DRAG_COEFF,
-    AIR_GRAVITY_TORQUE_SCALE,
-    AIR_ANGULAR_DAMPING,
-    AIR_IMPACT_SPIN_LOSS,
-    AIR_IMPACT_TANGENT_LOSS,
-    AUTO_BALANCE_DAMPING,
-    AUTO_BALANCE_STRENGTH,
-    AUTOBALANCING,
-    BIKE_ANGULAR_INERTIA,
-    BIKE_CENTER_OF_MASS_X,
-    BIKE_CENTER_OF_MASS_Y,
-    BIKE_RADIUS,
-    BRAKE_FORCE,
-    BRAKE_PITCH_RESPONSE,
-    BRAKE_SINGLE_WHEEL_PITCH_BONUS,
-    GRAVEL_SPAWN_RATE,
-    GRAVITY,
-    GROUND_GRAVITY_TORQUE_SCALE,
-    HARD_LANDING_CRASH_VY,
-    HEAD_OFFSET_X,
-    HEAD_OFFSET_Y,
-    LEFT_RIGHT_ANGULAR_ACCEL,
-    MAX_BIKE_SPEED,
-    MAX_GRAVITY_ANGULAR_ACCEL,
-    MAX_RAMP_LIFT_VY,
-    MIN_AIRBORNE_FRAMES,
-    RAMP_LAUNCH_RESPONSE,
-    SCREEN_HEIGHT,
-    SCREEN_WIDTH,
-    SINGLE_WHEEL_GRAVITY_BONUS,
-    SUSPENSION_DAMPER,
-    SUSPENSION_REBOUND,
-    SUSPENSION_SPRING,
-    SUSPENSION_TRAVEL,
-    WEIGHT_TRANSFER_RATE,
-    WHEEL_OFFSET_X,
-    WHEEL_OFFSET_Y,
-)
+from settings import SCREEN_HEIGHT, SCREEN_WIDTH
 
 
 class Bike:
@@ -54,18 +16,20 @@ class Bike:
         start_x: float,
         frame_color: tuple[int, int, int],
         dampening: float,
+        cfg: dict,
     ) -> None:
         self.terrain = terrain
         self.level_length = level_length
         self.default_start_x = start_x
         self.frame_color = frame_color
         self.dampening = dampening
+        self.cfg = cfg
         self.reset(start_x)
 
     def reset(self, spawn_x: float | None = None) -> None:
         spawn = self.default_start_x if spawn_x is None else spawn_x
         self.x = clamp(spawn, 0.0, self.level_length)
-        self.y = terrain_height_at(self.terrain, self.x) - BIKE_RADIUS
+        self.y = terrain_height_at(self.terrain, self.x) - self.cfg["bike_radius"]
         self.vx = 0.0
         self.vy = 0.0
         self.angle = 0.0
@@ -78,10 +42,17 @@ class Bike:
         self.crashed = False
         self.win = False
         self.drive_direction = 1
+        self.thrust_mod = 1.0
+        self.left_jerk_timer = 0.0
+        self.right_jerk_timer = 0.0
         self.flip_target = 1.0
         self.flip_visual = 1.0
         self.rear_contact = True
         self.front_contact = True
+        self.rear_wheel_x = 0.0
+        self.rear_wheel_y = 0.0
+        self.front_wheel_x = 0.0
+        self.front_wheel_y = 0.0
         self.airborne_frames = 0
         self.gravel_particles: list[dict[str, float | tuple[int, int, int]]] = []
 
@@ -118,7 +89,7 @@ class Bike:
         normal_speed = self.vx * nx + self.vy * ny
         if normal_speed >= 0.0:
             return
-        if normal_speed < -HARD_LANDING_CRASH_VY:
+        if normal_speed < -self.cfg["hard_landing_crash_vy"]:
             self.crashed = True
             return
 
@@ -127,31 +98,39 @@ class Bike:
         tangential_speed = self.vx * tangent_x + self.vy * tangent_y
         speed = math.hypot(self.vx, self.vy)
         impact_ratio = clamp(-normal_speed / max(1.0, speed), 0.0, 1.0)
-        tangential_speed *= max(0.0, 1.0 - AIR_IMPACT_TANGENT_LOSS * impact_ratio)
+        tangential_speed *= max(0.0, 1.0 - self.cfg["air_impact_tangent_loss"] * impact_ratio)
 
         self.vx = tangent_x * tangential_speed
         self.vy = tangent_y * tangential_speed
-        self.angular_velocity *= max(0.35, 1.0 - AIR_IMPACT_SPIN_LOSS * impact_ratio)
+        self.angular_velocity *= max(0.35, 1.0 - self.cfg["air_impact_spin_loss"] * impact_ratio)
 
     def _gravity_angular_accel(
         self,
         pivot: tuple[float, float] | None = None,
         scale: float = 1.0,
     ) -> float:
-        com_local_x = BIKE_CENTER_OF_MASS_X * self.drive_direction
-        com_x, _ = self._world_from_local(com_local_x, BIKE_CENTER_OF_MASS_Y)
+        com_local_x = self.cfg["bike_center_of_mass_x"] * self.drive_direction
+        com_x, _ = self._world_from_local(com_local_x, self.cfg["bike_center_of_mass_y"])
         if pivot is None:
-            lever_x, _ = self._rotated_offset(com_local_x, BIKE_CENTER_OF_MASS_Y)
+            lever_x, _ = self._rotated_offset(com_local_x, self.cfg["bike_center_of_mass_y"])
         else:
             lever_x = com_x - pivot[0]
-        angular_accel = lever_x * GRAVITY * scale / BIKE_ANGULAR_INERTIA
-        return clamp(angular_accel, -MAX_GRAVITY_ANGULAR_ACCEL, MAX_GRAVITY_ANGULAR_ACCEL)
+        angular_accel = lever_x * self.cfg["gravity"] * scale / self.cfg["bike_angular_inertia"]
+        return clamp(angular_accel, -self.cfg["max_gravity_angular_accel"], self.cfg["max_gravity_angular_accel"])
 
     def toggle_direction(self) -> None:
         self.drive_direction *= -1
         self.flip_target = float(self.drive_direction)
 
-    def update(self, dt: float, keys: pygame.key.ScancodeWrapper) -> None:
+    def update(
+        self,
+        dt: float,
+        keys: pygame.key.ScancodeWrapper,
+        traction_mod: float = 1.0,
+        braking_mod: float = 1.0,
+        air_control_mod: float = 1.0,
+        wind_force_x: float = 0.0,
+    ) -> None:
         if self.crashed or self.win:
             return
 
@@ -160,14 +139,14 @@ class Bike:
         if keys[pygame.K_UP] and drive_contact:
             slope = terrain_slope_at(self.terrain, clamp(self.x, 0.0, self.level_length))
             t_len = math.hypot(1.0, slope)
-            thrust = 1100.0 * dt * self.drive_direction
+            thrust = self.acceleration * dt * self.drive_direction * traction_mod * self.thrust_mod
             self.vx += thrust / t_len
             self.vy += thrust * slope / t_len
 
         brake_delta = 0.0
         if keys[pygame.K_DOWN] and (self.rear_contact or self.front_contact):
             prev_vx = self.vx
-            brake = BRAKE_FORCE * dt
+            brake = self.cfg["brake_force"] * dt * braking_mod
             if self.vx > 0.0:
                 self.vx = max(0.0, self.vx - brake)
             elif self.vx < 0.0:
@@ -176,36 +155,45 @@ class Bike:
 
         if self.on_ground:
             if keys[pygame.K_UP] and drive_contact:
-                self.angular_velocity -= WEIGHT_TRANSFER_RATE * dt * self.drive_direction
+                self.angular_velocity -= self.cfg["weight_transfer_rate"] * dt * self.drive_direction
             if brake_delta != 0.0:
-                brake_pitch = brake_delta * BRAKE_PITCH_RESPONSE
+                brake_pitch = brake_delta * self.cfg["brake_pitch_response"]
                 if self.rear_contact ^ self.front_contact:
-                    brake_pitch *= BRAKE_SINGLE_WHEEL_PITCH_BONUS
+                    brake_pitch *= self.cfg["brake_single_wheel_pitch_bonus"]
                 self.angular_velocity += brake_pitch
 
         if keys[pygame.K_LEFT]:
-            self.angular_velocity -= LEFT_RIGHT_ANGULAR_ACCEL * dt
+            mod = air_control_mod if not self.on_ground else 1.0
+            self.left_jerk_timer += dt
+            if self.left_jerk_timer >= 1.0:
+                self.left_jerk_timer = 0.0
+                self.angular_velocity -= self.cfg["left_right_angular_accel"] * self.cfg["jerk_strength"] * mod
         if keys[pygame.K_RIGHT]:
-            self.angular_velocity += LEFT_RIGHT_ANGULAR_ACCEL * dt
+            mod = air_control_mod if not self.on_ground else 1.0
+            self.right_jerk_timer += dt
+            if self.right_jerk_timer >= 1.0:
+                self.right_jerk_timer = 0.0
+                self.angular_velocity += self.cfg["left_right_angular_accel"] * self.cfg["jerk_strength"] * mod
 
         coupling = 100.0 if self.on_ground else 30.0
         self.vx += self.angular_velocity * coupling * dt
 
         if self.on_ground:
             self.vx *= self.dampening
-        self.vx = clamp(self.vx, -MAX_BIKE_SPEED, MAX_BIKE_SPEED)
+        self.vx = clamp(self.vx, -self.cfg["max_bike_speed"], self.cfg["max_bike_speed"])
 
         self.angular_velocity *= clamp(self.dampening - 0.005, 0.96, 0.995)
         self.angle += self.angular_velocity * dt
 
         if not self.on_ground:
-            self.vy += GRAVITY * dt
-            self.angular_velocity += self._gravity_angular_accel(scale=AIR_GRAVITY_TORQUE_SCALE) * dt
+            self.vy += self.cfg["gravity"] * dt
+            self.angular_velocity += self._gravity_angular_accel(scale=self.cfg["air_gravity_torque_scale"]) * dt
+            self.vx += wind_force_x * dt
             speed = math.hypot(self.vx, self.vy)
-            drag = AIR_DRAG_COEFF * speed * dt
+            drag = self.cfg["air_drag_coeff"] * speed * dt
             self.vx *= max(0.0, 1.0 - drag)
             self.vy *= max(0.0, 1.0 - drag)
-            self.angular_velocity *= AIR_ANGULAR_DAMPING
+            self.angular_velocity *= self.cfg["air_angular_damping"]
 
         self.x += self.vx * dt
         self.y += self.vy * dt
@@ -213,21 +201,21 @@ class Bike:
 
         prev_rear_comp = self.rear_compression
         prev_front_comp = self.front_compression
-        self.front_compression = max(0.0, self.front_compression - SUSPENSION_REBOUND * dt)
-        self.rear_compression = max(0.0, self.rear_compression - SUSPENSION_REBOUND * dt)
+        self.front_compression = max(0.0, self.front_compression - self.cfg["suspension_rebound"] * dt)
+        self.rear_compression = max(0.0, self.rear_compression - self.cfg["suspension_rebound"] * dt)
 
         for _ in range(2):
-            rear_x, rear_y = self._world_from_local(-WHEEL_OFFSET_X, WHEEL_OFFSET_Y - self.rear_compression)
-            front_x, front_y = self._world_from_local(WHEEL_OFFSET_X, WHEEL_OFFSET_Y - self.front_compression)
+            rear_x, rear_y = self._world_from_local(-self.cfg["wheel_offset_x"], self.cfg["wheel_offset_y"] - self.rear_compression)
+            front_x, front_y = self._world_from_local(self.cfg["wheel_offset_x"], self.cfg["wheel_offset_y"] - self.front_compression)
             rear_ground = terrain_height_at(self.terrain, clamp(rear_x, 0.0, self.level_length))
             front_ground = terrain_height_at(self.terrain, clamp(front_x, 0.0, self.level_length))
-            rear_penetration = rear_y + BIKE_RADIUS - rear_ground
-            front_penetration = front_y + BIKE_RADIUS - front_ground
+            rear_penetration = rear_y + self.cfg["bike_radius"] - rear_ground
+            front_penetration = front_y + self.cfg["bike_radius"] - front_ground
 
             if rear_penetration > 0.0:
-                if self.airborne_frames >= MIN_AIRBORNE_FRAMES:
+                if self.airborne_frames >= self.cfg["min_airborne_frames"]:
                     self._apply_airborne_impact(rear_x)
-                rear_absorb = min(rear_penetration, SUSPENSION_TRAVEL - self.rear_compression)
+                rear_absorb = min(rear_penetration, self.cfg["suspension_travel"] - self.rear_compression)
                 self.rear_compression += max(0.0, rear_absorb)
                 rear_penetration -= max(0.0, rear_absorb)
                 if rear_penetration > 0.0:
@@ -236,9 +224,9 @@ class Bike:
                         self.vy = 0.0
 
             if front_penetration > 0.0:
-                if self.airborne_frames >= MIN_AIRBORNE_FRAMES:
+                if self.airborne_frames >= self.cfg["min_airborne_frames"]:
                     self._apply_airborne_impact(front_x)
-                front_absorb = min(front_penetration, SUSPENSION_TRAVEL - self.front_compression)
+                front_absorb = min(front_penetration, self.cfg["suspension_travel"] - self.front_compression)
                 self.front_compression += max(0.0, front_absorb)
                 front_penetration -= max(0.0, front_absorb)
                 if front_penetration > 0.0:
@@ -250,17 +238,21 @@ class Bike:
             avg_comp = (self.rear_compression + self.front_compression) * 0.5
             comp_delta = ((self.rear_compression - prev_rear_comp) + (self.front_compression - prev_front_comp)) * 0.5
             comp_vel = clamp(comp_delta / dt, -200.0, 200.0)
-            spring_up = SUSPENSION_SPRING * avg_comp
-            damp = SUSPENSION_DAMPER * comp_vel
+            spring_up = self.cfg["suspension_spring"] * avg_comp
+            damp = self.cfg["suspension_damper"] * comp_vel
             impulse = clamp((spring_up + damp) * dt, 0.0, 12.0)
             self.vy -= impulse
 
-        rear_x, rear_y = self._world_from_local(-WHEEL_OFFSET_X, WHEEL_OFFSET_Y - self.rear_compression)
-        front_x, front_y = self._world_from_local(WHEEL_OFFSET_X, WHEEL_OFFSET_Y - self.front_compression)
+        rear_x, rear_y = self._world_from_local(-self.cfg["wheel_offset_x"], self.cfg["wheel_offset_y"] - self.rear_compression)
+        front_x, front_y = self._world_from_local(self.cfg["wheel_offset_x"], self.cfg["wheel_offset_y"] - self.front_compression)
+        self.rear_wheel_x = rear_x
+        self.rear_wheel_y = rear_y
+        self.front_wheel_x = front_x
+        self.front_wheel_y = front_y
         rear_ground = terrain_height_at(self.terrain, clamp(rear_x, 0.0, self.level_length))
         front_ground = terrain_height_at(self.terrain, clamp(front_x, 0.0, self.level_length))
-        rear_contact = rear_y + BIKE_RADIUS >= rear_ground - 2.0
-        front_contact = front_y + BIKE_RADIUS >= front_ground - 2.0
+        rear_contact = rear_y + self.cfg["bike_radius"] >= rear_ground - 2.0
+        front_contact = front_y + self.cfg["bike_radius"] >= front_ground - 2.0
         self.rear_contact = rear_contact
         self.front_contact = front_contact
         self.on_ground = rear_contact or front_contact
@@ -290,28 +282,28 @@ class Bike:
                 ground_slope = terrain_slope_at(self.terrain, front_x)
                 support_pivot = (front_x, front_ground)
 
-            gravity_scale = GROUND_GRAVITY_TORQUE_SCALE
+            gravity_scale = self.cfg["ground_gravity_torque_scale"]
             if rear_contact ^ front_contact:
-                gravity_scale *= SINGLE_WHEEL_GRAVITY_BONUS
+                gravity_scale *= self.cfg["single_wheel_gravity_bonus"]
             self.angular_velocity += self._gravity_angular_accel(support_pivot, gravity_scale) * dt
 
-            if AUTOBALANCING:
+            if self.cfg["autobalancing"]:
                 balance_scale = clamp(abs(self.vx) / 280.0, 0.15, 1.0)
-                self.angular_velocity += (target_angle - self.angle) * AUTO_BALANCE_STRENGTH * balance_scale * dt
-                self.angular_velocity *= AUTO_BALANCE_DAMPING
+                self.angular_velocity += (target_angle - self.angle) * self.cfg["auto_balance_strength"] * balance_scale * dt
+                self.angular_velocity *= self.cfg["auto_balance_damping"]
 
-            ramp_lift_vy = clamp(self.vx * ground_slope, -MAX_RAMP_LIFT_VY, MAX_RAMP_LIFT_VY)
-            lift_blend = clamp(dt * RAMP_LAUNCH_RESPONSE, 0.0, 1.0)
+            ramp_lift_vy = clamp(self.vx * ground_slope, -self.cfg["max_ramp_lift_vy"], self.cfg["max_ramp_lift_vy"])
+            lift_blend = clamp(dt * self.cfg["ramp_launch_response"], 0.0, 1.0)
             self.vy += (ramp_lift_vy - self.vy) * lift_blend
 
         if keys[pygame.K_UP] and drive_contact:
             drive_x, drive_y = (rear_x, rear_y) if self.drive_direction > 0 else (front_x, front_y)
-            spawn_count = max(1, int(GRAVEL_SPAWN_RATE * dt))
+            spawn_count = max(1, int(self.cfg["gravel_spawn_rate"] * dt))
             for _ in range(spawn_count):
                 self.gravel_particles.append(
                     {
                         "x": drive_x - self.drive_direction * random.uniform(6.0, 14.0),
-                        "y": drive_y + BIKE_RADIUS - random.uniform(2.0, 8.0),
+                        "y": drive_y + self.cfg["bike_radius"] - random.uniform(2.0, 8.0),
                         "vx": -self.drive_direction * random.uniform(140.0, 260.0) + self.vx * 0.2,
                         "vy": -random.uniform(120.0, 230.0),
                         "life": random.uniform(0.22, 0.38),
@@ -328,7 +320,7 @@ class Bike:
             particle["life"] = life
             particle["x"] = float(particle["x"]) + float(particle["vx"]) * dt
             particle["y"] = float(particle["y"]) + float(particle["vy"]) * dt
-            particle["vy"] = float(particle["vy"]) + GRAVITY * 0.45 * dt
+            particle["vy"] = float(particle["vy"]) + self.cfg["gravity"] * 0.45 * dt
             particle["vx"] = float(particle["vx"]) * 0.985
             ground_y = terrain_height_at(self.terrain, clamp(float(particle["x"]), 0.0, self.level_length))
             if float(particle["y"]) >= ground_y:
@@ -341,7 +333,7 @@ class Bike:
         flip_blend = clamp(dt * 9.0, 0.0, 1.0)
         self.flip_visual += (self.flip_target - self.flip_visual) * flip_blend
 
-        head_x, head_y = self._world_from_local(HEAD_OFFSET_X * self.drive_direction, HEAD_OFFSET_Y)
+        head_x, head_y = self._world_from_local(self.cfg["head_offset_x"] * self.drive_direction, self.cfg["head_offset_y"])
         head_ground = terrain_height_at(self.terrain, clamp(head_x, 0.0, self.level_length))
         if head_y >= head_ground:
             self.crashed = True

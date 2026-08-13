@@ -115,8 +115,22 @@ def draw_bike_visual(
     pygame.draw.circle(screen, (240, 70, 70), front_hand, glove_radius)
 
 
-def draw_sky(screen: pygame.Surface, animation_time: float) -> None:
-    screen.fill((62, 132, 235))
+def draw_sky(
+    screen: pygame.Surface,
+    animation_time: float,
+    sky_top: tuple[int, int, int] | None = None,
+    sky_bot: tuple[int, int, int] | None = None,
+) -> None:
+    if sky_top is not None and sky_bot is not None:
+        for y in range(SCREEN_HEIGHT):
+            t = y / SCREEN_HEIGHT
+            r = int(sky_top[0] * (1 - t) + sky_bot[0] * t)
+            g = int(sky_top[1] * (1 - t) + sky_bot[1] * t)
+            b = int(sky_top[2] * (1 - t) + sky_bot[2] * t)
+            pygame.draw.line(screen, (r, g, b), (0, y), (SCREEN_WIDTH, y))
+    else:
+        screen.fill((62, 132, 235))
+
     pulse = 0.5 + 0.5 * math.sin(animation_time * 0.25)
     clouds = [
         (0.08, 0.12, 260, 170),
@@ -135,6 +149,28 @@ def draw_sky(screen: pygame.Surface, animation_time: float) -> None:
             glow = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
             pygame.draw.circle(glow, (180, 215, 255, alpha), (radius, radius), radius)
             screen.blit(glow, (x - radius, y - radius))
+
+
+def draw_weather_overlays(
+    screen: pygame.Surface,
+    weather: "WeatherSystem",
+    camera_x: float,
+    camera_y: float,
+    bike_screen_x: float,
+    bike_screen_y: float,
+    facing_right: bool,
+) -> None:
+    from weather import WeatherSystem
+
+    if not isinstance(weather, WeatherSystem):
+        return
+
+    weather.set_camera_x(camera_x)
+    weather.draw_stars(screen, weather.darkness)
+    weather.draw_particles(screen)
+    weather.draw_fog_overlay(screen, camera_x, camera_y)
+    weather.draw_night_overlay(screen)
+    weather.draw_headlight(screen, bike_screen_x, bike_screen_y, facing_right)
 
 
 def draw_terrain(screen: pygame.Surface, terrain: list[tuple[float, float]], camera_x: float) -> None:
