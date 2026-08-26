@@ -45,6 +45,8 @@ class Bike:
         self.thrust_mod = 1.0
         self.left_jerk_timer = 0.0
         self.right_jerk_timer = 0.0
+        self.prev_left = False
+        self.prev_right = False
         self.flip_target = 1.0
         self.flip_visual = 1.0
         self.rear_contact = True
@@ -162,18 +164,33 @@ class Bike:
                     brake_pitch *= self.cfg["brake_single_wheel_pitch_bonus"]
                 self.angular_velocity += brake_pitch
 
-        if keys[pygame.K_LEFT]:
+        left_pressed = keys[pygame.K_LEFT]
+        right_pressed = keys[pygame.K_RIGHT]
+
+        if left_pressed and not self.prev_left:
+            mod = air_control_mod if not self.on_ground else 1.0
+            self.angular_velocity -= self.cfg["left_right_angular_accel"] * self.cfg["jerk_strength"] * mod
+            self.left_jerk_timer = 0.0
+        elif left_pressed:
             mod = air_control_mod if not self.on_ground else 1.0
             self.left_jerk_timer += dt
             if self.left_jerk_timer >= 1.0:
                 self.left_jerk_timer = 0.0
                 self.angular_velocity -= self.cfg["left_right_angular_accel"] * self.cfg["jerk_strength"] * mod
-        if keys[pygame.K_RIGHT]:
+
+        if right_pressed and not self.prev_right:
+            mod = air_control_mod if not self.on_ground else 1.0
+            self.angular_velocity += self.cfg["left_right_angular_accel"] * self.cfg["jerk_strength"] * mod
+            self.right_jerk_timer = 0.0
+        elif right_pressed:
             mod = air_control_mod if not self.on_ground else 1.0
             self.right_jerk_timer += dt
             if self.right_jerk_timer >= 1.0:
                 self.right_jerk_timer = 0.0
                 self.angular_velocity += self.cfg["left_right_angular_accel"] * self.cfg["jerk_strength"] * mod
+
+        self.prev_left = left_pressed
+        self.prev_right = right_pressed
 
         coupling = 100.0 if self.on_ground else 30.0
         self.vx += self.angular_velocity * coupling * dt
