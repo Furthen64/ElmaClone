@@ -336,3 +336,39 @@ def draw_design_screen(
     for index, line in enumerate(controls):
         text = body_font.render(line, True, (220, 230, 245))
         screen.blit(text, (panel_x + 50, panel_y + 292 + index * 26))
+
+
+def draw_level_complete_screen(
+    screen: pygame.Surface,
+    title_font: pygame.font.Font,
+    body_font: pygame.font.Font,
+    level_name: str,
+    time_ms: int,
+    apples: int,
+    total_apples: int,
+    deaths: int,
+) -> None:
+    draw_sky(screen, pygame.time.get_ticks() / 1000.0)
+    panel = pygame.Surface((680, 380), pygame.SRCALPHA)
+    panel.fill((10, 20, 40, 165))
+    panel_x = SCREEN_WIDTH // 2 - panel.get_width() // 2
+    panel_y = SCREEN_HEIGHT // 2 - panel.get_height() // 2
+    screen.blit(panel, (panel_x, panel_y))
+
+    title = title_font.render("Level Complete!", True, (120, 230, 120))
+    screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, panel_y + 28))
+
+    level_text = body_font.render(level_name, True, (235, 240, 250))
+    screen.blit(level_text, (SCREEN_WIDTH // 2 - level_text.get_width() // 2, panel_y + 92))
+
+    time_text = body_font.render(f"Time: {format_race_time(time_ms)}", True, (240, 245, 255))
+    apples_text = body_font.render(f"Apples: {apples}/{total_apples}", True, (240, 245, 255))
+    deaths_text = body_font.render(f"Deaths: {deaths}", True, (240, 245, 255))
+    screen.blit(time_text, (SCREEN_WIDTH // 2 - time_text.get_width() // 2, panel_y + 152))
+    screen.blit(apples_text, (SCREEN_WIDTH // 2 - apples_text.get_width() // 2, panel_y + 192))
+    screen.blit(deaths_text, (SCREEN_WIDTH // 2 - deaths_text.get_width() // 2, panel_y + 232))
+
+    continue_text = body_font.render("ENTER - Next level", True, (150, 220, 150))
+    menu_text = body_font.render("ESC - Menu", True, (200, 205, 220))
+    screen.blit(continue_text, (SCREEN_WIDTH // 2 - continue_text.get_width() // 2, panel_y + 292))
+    screen.blit(menu_text, (SCREEN_WIDTH // 2 - menu_text.get_width() // 2, panel_y + 324))

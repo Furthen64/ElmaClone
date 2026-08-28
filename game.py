@@ -6,6 +6,7 @@ from level import clamp, load_level_entry
 from render import (
     draw_collectibles,
     draw_design_screen,
+    draw_level_complete_screen,
     draw_menu_screen,
     draw_sky,
     draw_terrain,
@@ -63,6 +64,11 @@ def main() -> int:
     weather = WeatherSystem() if WEATHER_ENABLED else None
     race_start_ms = pygame.time.get_ticks()
     finish_elapsed_ms: int | None = None
+    death_count = 0
+    completed_time_ms: int | None = None
+    completed_apples = 0
+    completed_total_apples = 0
+    completed_deaths = 0
     game_state = "menu"
     debug_mode = False
 
@@ -73,7 +79,7 @@ def main() -> int:
         )
 
     def reset_level_state() -> None:
-        nonlocal checkpoint_spawn_x, crash_timer, race_start_ms, finish_elapsed_ms, weather
+        nonlocal checkpoint_spawn_x, crash_timer, race_start_ms, finish_elapsed_ms, weather, death_count
         checkpoint_spawn_x = level["start_x"]
         for coin in coins:
             coin["collected"] = False
@@ -83,8 +89,29 @@ def main() -> int:
         crash_timer = 0.0
         race_start_ms = pygame.time.get_ticks()
         finish_elapsed_ms = None
+        death_count = 0
         if WEATHER_ENABLED:
             weather = WeatherSystem()
+
+    def switch_level(new_index: int) -> None:
+        nonlocal selected_level_index, selected_level_name, level, terrain, finish_x, coins, checkpoints, bike
+        selected_level_index = new_index % len(LEVEL_FILES)
+        selected_level_name, level = load_level_entry(selected_level_index)
+        terrain = level["terrain"]
+        finish_x = level["finish_x"]
+        coins = level["coins"]
+        checkpoints = level["checkpoints"]
+        bike = Bike(
+            terrain,
+            finish_x,
+            level["start_x"],
+            BIKE_COLOR_OPTIONS[selected_color_index][1],
+            DAMPENING_OPTIONS[selected_dampening_index][1],
+            game_config,
+        )
+        bike.acceleration = float(game_config["acceleration"])
+        bike.thrust_mod = float(game_config["thrust_mod"])
+        reset_level_state()
 
     running = True
     while running:
@@ -104,28 +131,7 @@ def main() -> int:
                         reset_level_state()
                         game_state = "play"
                     elif event.key == pygame.K_l:
-                        selected_level_index = (selected_level_index + 1) % len(LEVEL_FILES)
-                        selected_level_name, level = load_level_entry(selected_level_index)
-                        terrain = level["terrain"]
-                        finish_x = level["finish_x"]
-                        coins = level["coins"]
-                        checkpoints = level["checkpoints"]
-                        bike = Bike(
-                            terrain,
-                            finish_x,
-                            level["start_x"],
-                            BIKE_COLOR_OPTIONS[selected_color_index][1],
-                            DAMPENING_OPTIONS[selected_dampening_index][1],
-                            game_config,
-                        )
-                        bike.acceleration = float(game_config["acceleration"])
-                        bike.thrust_mod = float(game_config["thrust_mod"])
-                        checkpoint_spawn_x = level["start_x"]
-                        crash_timer = 0.0
-                        race_start_ms = pygame.time.get_ticks()
-                        finish_elapsed_ms = None
-                        if WEATHER_ENABLED:
-                            weather = WeatherSystem()
+                        switch_level(selected_level_index + 1)
                     elif event.key == pygame.K_d:
                         game_state = "design"
                     elif event.key == pygame.K_ESCAPE:
@@ -147,6 +153,12 @@ def main() -> int:
                         selected_dampening_index = (selected_dampening_index + 1) % len(DAMPENING_OPTIONS)
                         apply_selected_setup()
                     elif event.key in (pygame.K_RETURN, pygame.K_ESCAPE):
+                        game_state = "menu"
+                elif game_state == "level_complete":
+                    if event.key == pygame.K_RETURN:
+                        switch_level(selected_level_index + 1)
+                        game_state = "play"
+                    elif event.key == pygame.K_ESCAPE:
                         game_state = "menu"
                 elif game_state == "play":
                     if debug_mode and event.key == pygame.K_EQUALS:
@@ -187,6 +199,8 @@ def main() -> int:
                 weather.update(dt)
 
             if bike.crashed:
+                if crash_timer == 0.0:
+                    death_count += 1
                 crash_timer += dt
                 if crash_timer >= CRASH_RESPAWN_DELAY:
                     bike.reset(checkpoint_spawn_x)
@@ -217,7 +231,12 @@ def main() -> int:
             if not bike.crashed and bike.x >= finish_x - 30 and collected == total_coins:
                 if not bike.win:
                     finish_elapsed_ms = pygame.time.get_ticks() - race_start_ms
-                bike.win = True
+                    completed_time_ms = finish_elapsed_ms
+                    completed_apples = collected
+                    completed_total_apples = total_coins
+                    completed_deaths = death_count
+                    bike.win = True
+                    game_state = "level_complete"
 
             camera_x = clamp(bike.x - SCREEN_WIDTH * 0.35, 0.0, max(finish_x - SCREEN_WIDTH, 0.0))
 
@@ -302,9 +321,6 @@ def main() -> int:
             if bike.crashed:
                 crash = font.render("CRASHED - Respawning from checkpoint...", True, (200, 20, 20))
                 screen.blit(crash, (SCREEN_WIDTH // 2 - crash.get_width() // 2, 140))
-            elif bike.win:
-                win = font.render("FINISH! All coins collected - Press R to replay", True, (10, 120, 10))
-                screen.blit(win, (SCREEN_WIDTH // 2 - win.get_width() // 2, 140))
             elif bike.x >= finish_x - 30 and collected < total_coins:
                 need = font.render("Collect all coins before finishing", True, (120, 70, 0))
                 screen.blit(need, (SCREEN_WIDTH // 2 - need.get_width() // 2, 140))
@@ -316,6 +332,17 @@ def main() -> int:
                 BIKE_COLOR_OPTIONS[selected_color_index][0],
                 BIKE_COLOR_OPTIONS[selected_color_index][1],
                 DAMPENING_OPTIONS[selected_dampening_index][0],
+            )
+        elif game_state == "level_complete":
+            draw_level_complete_screen(
+                screen,
+                title_font,
+                font,
+                selected_level_name,
+                max(0, completed_time_ms or 0),
+                completed_apples,
+                completed_total_apples,
+                completed_deaths,
             )
         else:
             draw_menu_screen(screen, title_font, small_font, selected_level_name)
