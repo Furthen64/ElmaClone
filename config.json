@@ -22,6 +22,8 @@
     "max_ramp_lift_vy": 700.0,
     "air_impact_tangent_loss": 0.28,
     "air_impact_spin_loss": 0.5,
+    "wall_bounce_restitution": 0.55,
+    "wall_bounce_tangent_keep": 0.25,
     "suspension_spring": 400.0,
     "suspension_damper": 20.0,
     "weight_transfer_rate": 3.0,

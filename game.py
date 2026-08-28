@@ -305,6 +305,7 @@ def main() -> int:
                     f"Front wheel: ({bike.front_wheel_x:.1f}, {bike.front_wheel_y:.1f})",
                     f"Ground: {bike.on_ground} | Rear: {bike.rear_contact} | Front: {bike.front_contact}",
                     f"Suspension R:{bike.rear_compression:.1f} F:{bike.front_compression:.1f}",
+                    f"Crash: {bike.crash_reason or 'none'}",
                 ]
                 for i, line in enumerate(debug_lines):
                     t = small_font.render(line, True, (255, 255, 0))
@@ -321,6 +322,9 @@ def main() -> int:
             if bike.crashed:
                 crash = font.render("CRASHED - Respawning from checkpoint...", True, (200, 20, 20))
                 screen.blit(crash, (SCREEN_WIDTH // 2 - crash.get_width() // 2, 140))
+                if bike.crash_reason:
+                    cause = small_font.render(f"Cause: {bike.crash_reason}", True, (220, 130, 130))
+                    screen.blit(cause, (SCREEN_WIDTH // 2 - cause.get_width() // 2, 170))
             elif bike.x >= finish_x - 30 and collected < total_coins:
                 need = font.render("Collect all coins before finishing", True, (120, 70, 0))
                 screen.blit(need, (SCREEN_WIDTH // 2 - need.get_width() // 2, 140))

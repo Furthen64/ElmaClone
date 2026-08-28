@@ -40,6 +40,7 @@ class Bike:
         self.prev_rear_compression = 0.0
         self.prev_front_compression = 0.0
         self.crashed = False
+        self.crash_reason = ""
         self.win = False
         self.drive_direction = 1
         self.thrust_mod = 1.0
@@ -91,19 +92,18 @@ class Bike:
         normal_speed = self.vx * nx + self.vy * ny
         if normal_speed >= 0.0:
             return
-        if normal_speed < -self.cfg["hard_landing_crash_vy"]:
-            self.crashed = True
-            return
 
         tangent_x = -ny
         tangent_y = nx
         tangential_speed = self.vx * tangent_x + self.vy * tangent_y
         speed = math.hypot(self.vx, self.vy)
         impact_ratio = clamp(-normal_speed / max(1.0, speed), 0.0, 1.0)
-        tangential_speed *= max(0.0, 1.0 - self.cfg["air_impact_tangent_loss"] * impact_ratio)
 
-        self.vx = tangent_x * tangential_speed
-        self.vy = tangent_y * tangential_speed
+        new_normal_speed = -normal_speed * self.cfg["wall_bounce_restitution"]
+        tangential_speed *= self.cfg["wall_bounce_tangent_keep"]
+
+        self.vx = nx * new_normal_speed + tangent_x * tangential_speed
+        self.vy = ny * new_normal_speed + tangent_y * tangential_speed
         self.angular_velocity *= max(0.35, 1.0 - self.cfg["air_impact_spin_loss"] * impact_ratio)
 
     def _gravity_angular_accel(
@@ -354,6 +354,9 @@ class Bike:
         head_ground = terrain_height_at(self.terrain, clamp(head_x, 0.0, self.level_length))
         if head_y >= head_ground:
             self.crashed = True
+            self.crash_reason = (
+                f"Head squash (penetration {head_y - head_ground:.0f}px, angle {self.angle * 57.2958:.0f}deg)"
+            )
 
     def draw(self, screen: pygame.Surface, camera_x: float) -> None:
         for particle in self.gravel_particles:
